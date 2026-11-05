@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import BaseModel, create_model
 
 from app.core.config import get_settings
-from app.core.taxonomy import Purpose
+from app.core.taxonomy import purposes
 from app.services.llm import claude_client, household_guide, refusal_fallback
 
 log = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ class OcrLine(BaseModel):
     quantity: float
     line_total: float
     category: str
-    purpose: Purpose
+    purpose: str
 
 
 class OcrReceipt(BaseModel):
@@ -67,8 +67,9 @@ class OcrReceipt(BaseModel):
 
 
 def output_model(categories: list[str]) -> type[BaseModel]:
-    """The answer schema with the category limited to the categories that exist right now."""
-    line = create_model("OcrLine", __base__=OcrLine, category=(Literal[tuple(categories)], ...))
+    """The answer schema with category and purpose limited to the ones that exist right now."""
+    line = create_model("OcrLine", __base__=OcrLine, category=(Literal[tuple(categories)], ...),
+                        purpose=(Literal[purposes()], ...))
     return create_model("OcrReceipt", __base__=OcrReceipt, lines=(list[line], ...))
 
 

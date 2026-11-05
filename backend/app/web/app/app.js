@@ -744,6 +744,7 @@ async function moreScreen(ctx) {
       ${link("#/review", "📅", "Month review", "How last month went, and what needs a look")}
       ${link("#/budgets", "🎯", "Budgets", "Monthly limits per budget line")}
       ${link("#/alerts", "🔔", "Budget alerts", "Warnings and overages so far")}
+      ${link("#/household", "🏠", "Household", "People, cards and accounts")}
       ${link("#/categories", "🏷️", "Categories", "Add, rename or merge")}
       ${link("/import", "📄", "Import a statement", "CSV or RBC PDF (easier on a computer)")}
     </div>
@@ -964,6 +965,212 @@ function signInScreen(view) {
 }
 
 // ---------- router ----------
+// ---------- household setup (first run) and editing ----------
+const PERSON_KINDS = [
+  { icon: "person", label: "Person", hint: "Their own spending: gym, haircuts, clothes…" },
+  { icon: "family", label: "Family", hint: "Money sent to them, and things bought for them" },
+  { icon: "abroad", label: "Abroad", hint: "Spending kept apart, e.g. while living in another country" },
+];
+
+function defaultLines(p) {
+  const name = p.name.trim() || "…";
+  if (p.icon === "family") return p.split ? { line: `${name} Shopping`, transfer: name } : { line: name, transfer: "" };
+  if (p.icon === "abroad") return { line: name, transfer: "" };
+  return { line: `${name} Personal`, transfer: "" };
+}
+
+function householdDraft(h) {
+  const people = h.purposes.slice(1).map(p => ({
+    name: p.name, icon: p.icon, line: p.budget_line || "", transfer: p.transfer_budget_line || "",
+    split: !!p.transfer_budget_line, guide: p.guide, original: { name: p.name, icon: p.icon }, custom: true,
+  }));
+  const accounts = h.accounts.map(a => ({ ...a, card_last4: a.card_last4 || "", known: h.known_accounts.some(k => k.id === a.id) }));
+  return { description: h.setup_needed ? "" : h.description, people, accounts };
+}
+
+function slug(text) {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 40) || "account";
+}
+
+function householdBody(d) {
+  return {
+    description: d.description.trim(),
+    purposes: [{ name: "Shared" }, ...d.people.map(p => {
+      const lines = p.custom ? { line: p.line, transfer: p.transfer } : defaultLines(p);
+      const same = p.original && p.original.name === p.name.trim() && p.original.icon === p.icon;
+      return {
+        name: p.name.trim(), icon: p.icon, guide: same ? p.guide : null,
+        budget_line: lines.line.trim() || null, transfer_budget_line: lines.transfer.trim() || null,
+      };
+    })],
+    accounts: d.accounts.map(a => ({
+      id: a.id, institution: a.institution.trim(), name: a.name.trim(), currency: a.currency || "CAD",
+      card_last4: a.card_last4.trim() || null,
+    })),
+  };
+}
+
+async function householdScreen(ctx) {
+  const h = await api("/household");
+  if (!ctx.alive()) return;
+  const setup = h.setup_needed;
+  const d = householdDraft(h);
+  const steps = ["About you", "People", "Accounts", "Review"];
+  let step = 0, error = "";
+  if (setup) { $("#tabs").hidden = true; $("#back").hidden = true; ctx.title("Set up Xpensimate"); }
+
+  const peopleHtml = () => d.people.map((p, i) => {
+    const lines = p.custom ? p : { ...p, ...defaultLines(p) };
+    const uses = p.original ? h.purposes_in_use[p.original.name] || 0 : 0;
+    return `<div class="card stack" data-person="${i}">
+      <div class="row"><label class="field grow">Name<input data-p="name" value="${esc(p.name)}" maxlength="40" placeholder="e.g. Alex" autocapitalize="words"></label>
+        <button class="btn text danger" data-remove-person="${i}" style="width:auto;color:var(--critical)" ${uses ? `disabled title="Used by ${uses} charges"` : ""}>Remove</button></div>
+      <div class="seg">${PERSON_KINDS.map(k => `<button type="button" data-kind="${k.icon}" class="${p.icon === k.icon ? "on" : ""}">${k.label}</button>`).join("")}</div>
+      <div class="small muted">${esc(PERSON_KINDS.find(k => k.icon === p.icon).hint)}${uses ? ` · ${plural(uses, "charge")} so far` : ""}</div>
+      ${p.icon === "family" ? `<label class="row small"><input type="checkbox" data-p="split" ${p.split ? "checked" : ""}> Budget money sent to them separately from things bought for them</label>` : ""}
+      <details><summary class="small muted">Budget line${lines.transfer ? "s" : ""}: ${esc(lines.line)}${lines.transfer ? `, ${esc(lines.transfer)}` : ""}</summary>
+        <div class="stack" style="margin-top:8px">
+          <label class="field">Budget line<input data-p="line" value="${esc(lines.line)}" maxlength="64"></label>
+          ${p.icon === "family" && p.split ? `<label class="field">Money sent to them<input data-p="transfer" value="${esc(lines.transfer)}" maxlength="64"></label>` : ""}
+        </div></details>
+    </div>`;
+  }).join("");
+
+  const bankOptions = a => [...h.known_accounts.map(k => `<option value="${esc(k.id)}" ${a.id === k.id ? "selected" : ""}>${esc(k.name)}</option>`),
+    `<option value="" ${a.known ? "" : "selected"}>Another card or account…</option>`].join("");
+  const accountsHtml = () => d.accounts.map((a, i) => `<div class="card stack" data-account="${i}">
+      <label class="field">Account<select data-a="known">${bankOptions(a)}</select></label>
+      ${a.known ? "" : `<label class="field">Bank<input data-a="institution" value="${esc(a.institution)}" maxlength="64" placeholder="e.g. Scotiabank"></label>`}
+      <label class="field">Name in the app<input data-a="name" value="${esc(a.name)}" maxlength="64"></label>
+      <div class="row"><label class="field grow">Card's last 4 digits<input data-a="card_last4" value="${esc(a.card_last4)}" inputmode="numeric" maxlength="4" placeholder="1234"></label>
+        <button class="btn text danger" data-remove-account="${i}" style="width:auto;align-self:flex-end;color:var(--critical)">Remove</button></div>
+    </div>`).join("");
+
+  const review = () => {
+    const body = householdBody(d);
+    return `<div class="card stack">
+      <div><div class="small muted">Your household</div><div>${esc(body.description || "—")}</div></div>
+      <div><div class="small muted">Who spending is for</div>
+        ${body.purposes.map(p => `<div class="row" style="margin-top:6px"><span class="badge sm" aria-hidden="true">${p.budget_line ? PERSON_ICONS[p.icon] : "🛒"}</span>
+          <div class="grow"><b>${esc(p.name)}</b><div class="sub small muted">${!p.budget_line ? "Budgeted by category"
+            : p.transfer_budget_line ? `Budgeted as ${esc(p.transfer_budget_line)} (money sent) and ${esc(p.budget_line)}` : `Budgeted as ${esc(p.budget_line)}`}</div></div></div>`).join("")}</div>
+      <div><div class="small muted">Accounts</div>${body.accounts.length ? body.accounts.map(a => `<div>${esc(a.name)}${a.card_last4 ? ` <span class="muted">•••• ${esc(a.card_last4)}</span>` : ""}</div>`).join("")
+        : `<div class="muted">None yet: purchases still come in, without an account.</div>`}</div>
+    </div>`;
+  };
+
+  const sections = [
+    () => `<div class="card stack">
+        <h3>${setup ? "Welcome! Let's set up your household" : "About your household"}</h3>
+        <div class="small muted">A sentence about who you are and where you live. Claude reads it when it sorts a purchase you haven't seen before.</div>
+        <textarea class="input note-input" data-desc rows="3" style="min-height:88px" maxlength="500" placeholder="e.g. two people in Toronto, Canada, Alex and Sam, who also help Alex's parents">${esc(d.description)}</textarea>
+      </div>`,
+    () => `<div class="card small muted">Every purchase is for someone. <b>Shared</b> spending (groceries, rent, eating out…) is
+        budgeted by category. Add the people whose own spending you want to budget separately.</div>
+      ${peopleHtml()}
+      <button class="btn secondary" data-add-person>+ Add a person</button>`,
+    () => `<div class="card small muted">Your cards and bank accounts. When a bank alert shows a card's last 4 digits,
+        the purchase goes to that account. You can skip this and add them later.</div>
+      ${accountsHtml()}
+      <button class="btn secondary" data-add-account>+ Add an account</button>`,
+    review,
+  ];
+
+  const draw = () => {
+    ctx.view.innerHTML = `<div class="stack">
+      <div class="chips">${steps.map((s, i) => `<button class="chip ${i === step ? "on" : ""}" data-step="${i}">${i + 1}. ${s}</button>`).join("")}</div>
+      ${sections[step]()}
+      <p class="err" data-error>${esc(error)}</p>
+      <div class="btn-row">
+        ${step > 0 ? `<button class="btn secondary" data-prev>Back</button>` : ""}
+        ${step < steps.length - 1 ? `<button class="btn" data-next>Next</button>` : `<button class="btn" data-save>${setup ? "Finish setup" : "Save"}</button>`}
+      </div></div>`;
+    bind();
+  };
+
+  const check = () => {
+    if (step === 0 && !d.description.trim()) return "Add a few words about your household.";
+    if (step === 1) {
+      const names = d.people.map(p => p.name.trim());
+      if (names.some(n => !n)) return "Every person needs a name.";
+      if (new Set([...names, "Shared"]).size !== names.length + 1) return "Each person needs a different name (and not \"Shared\").";
+    }
+    if (step === 2) {
+      if (d.accounts.some(a => !a.name.trim() || !a.institution.trim())) return "Every account needs a bank and a name.";
+      if (d.accounts.some(a => a.card_last4.trim() && !/^\d{4}$/.test(a.card_last4.trim()))) return "Card digits are the last 4 numbers on the card.";
+    }
+    return "";
+  };
+  const go = to => { error = to > step ? check() : ""; if (!error) step = to; draw(); window.scrollTo(0, 0); };
+
+  function bind() {
+    const v = ctx.view;
+    $("[data-desc]", v)?.addEventListener("input", e => { d.description = e.target.value; });
+    $$("[data-step]", v).forEach(b => b.onclick = () => { let to = +b.dataset.step; if (to > step) { for (; step < to && !(error = check()); step++); draw(); } else go(to); });
+    $("[data-prev]", v)?.addEventListener("click", () => go(step - 1));
+    $("[data-next]", v)?.addEventListener("click", () => go(step + 1));
+    $("[data-add-person]", v)?.addEventListener("click", () => { d.people.push({ name: "", icon: "person", line: "", transfer: "", split: false, custom: false }); draw(); });
+    $("[data-add-account]", v)?.addEventListener("click", () => {
+      const used = new Set(d.accounts.map(a => a.id));
+      const k = h.known_accounts.find(k => !used.has(k.id));
+      d.accounts.push(k ? { ...k, card_last4: "", known: true } : { id: "", institution: "", name: "", currency: "CAD", card_last4: "", known: false });
+      draw();
+    });
+    $$("[data-person]", v).forEach(card => {
+      const p = d.people[+card.dataset.person];
+      $$("[data-p]", card).forEach(input => input.addEventListener(input.type === "checkbox" ? "change" : "input", () => {
+        const field = input.dataset.p;
+        if (field === "split") { p.split = input.checked; p.custom = false; draw(); return; }
+        if (field === "line" || field === "transfer") {
+          if (!p.custom) Object.assign(p, defaultLines(p));
+          p.custom = true;
+        }
+        p[field] = input.value;
+        if (field === "name" && !p.custom) { const s = $("summary", card); if (s) s.textContent = `Budget line: ${defaultLines(p).line}`; }
+      }));
+      $$("[data-kind]", card).forEach(b => b.onclick = () => { p.icon = b.dataset.kind; p.custom = false; draw(); });
+    });
+    $$("[data-remove-person]", v).forEach(b => b.onclick = () => { d.people.splice(+b.dataset.removePerson, 1); draw(); });
+    $$("[data-account]", v).forEach(card => {
+      const a = d.accounts[+card.dataset.account];
+      $$("[data-a]", card).forEach(input => input.addEventListener(input.tagName === "SELECT" ? "change" : "input", () => {
+        if (input.dataset.a === "known") {
+          const k = h.known_accounts.find(k => k.id === input.value);
+          Object.assign(a, k ? { ...k, card_last4: a.card_last4, known: true } : { id: "", institution: "", name: "", known: false });
+          draw();
+          return;
+        }
+        a[input.dataset.a] = input.value;
+      }));
+    });
+    $$("[data-remove-account]", v).forEach(b => b.onclick = () => { d.accounts.splice(+b.dataset.removeAccount, 1); draw(); });
+    $("[data-save]", v)?.addEventListener("click", save);
+  }
+
+  async function save() {
+    for (step = 0; step < steps.length - 1; step++) if ((error = check())) return draw();
+    // Accounts outside the known list get an id from their bank and name.
+    const ids = new Set(d.accounts.filter(a => a.id).map(a => a.id));
+    for (const a of d.accounts) if (!a.id) { let id = slug(`${a.institution} ${a.name}`), n = 2; while (ids.has(id)) id = `${slug(`${a.institution} ${a.name}`)}_${n++}`; a.id = id; ids.add(id); }
+    const btn = $("[data-save]", ctx.view);
+    btn.disabled = true;
+    try {
+      await api("/household", { method: "PUT", body: householdBody(d) });
+      state.taxonomy = null;
+      state.setupNeeded = false;
+      toast(setup ? "You're all set" : "Household saved");
+      location.hash = setup ? "#/" : "#/more";
+      if (setup) route();
+    } catch (e) {
+      error = e.message;
+      draw();
+    }
+  }
+
+  draw();
+}
+
+
 const ROUTES = [
   { re: /^\/$/, screen: homeScreen, title: "Xpensimate", tab: "home" },
   { re: /^\/transactions$/, screen: transactionsScreen, title: "Spending", tab: "transactions" },
@@ -977,6 +1184,7 @@ const ROUTES = [
   { re: /^\/budgets$/, screen: budgetsScreen, title: "Budgets", parent: "more" },
   { re: /^\/alerts$/, screen: alertsScreen, title: "Budget alerts", parent: "more" },
   { re: /^\/categories$/, screen: categoriesScreen, title: "Categories", parent: "more" },
+  { re: /^\/household$/, screen: householdScreen, title: "Household", parent: "more" },
 ];
 
 let renderSeq = 0;
@@ -990,6 +1198,13 @@ async function route() {
   closeSheet();
   const view = $("#view");
   if (!token()) return signInScreen(view);
+
+  // A new server starts with the setup wizard.
+  if (state.setupNeeded === undefined) {
+    try { state.setupNeeded = (await api("/household")).setup_needed; } catch { state.setupNeeded = false; }
+    if (seq !== renderSeq) return;
+  }
+  if (state.setupNeeded && location.hash !== "#/household") { location.replace("#/household"); return route(); }
 
   const [path, queryString = ""] = (location.hash.slice(1) || "/").split("?");
   let match = null, r;

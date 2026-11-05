@@ -3,7 +3,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
-from app.core.taxonomy import DEFAULT_CATEGORIES, RESERVED_NAMES, budget_lines
+from app.core.taxonomy import DEFAULT_CATEGORIES, budget_lines, reserved_names
 from app.db.models import (
     BudgetAlert,
     BudgetEnvelope,
@@ -52,7 +52,7 @@ def validate_new_name(db: Session, name: str) -> str:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "A category name needs 1-64 characters")
     if "/" in name:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "A category name can't contain '/'")
-    if name in RESERVED_NAMES:
+    if name in reserved_names():
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"{name!r} is already a budget line for a person")
     if db.get(CategoryRow, name) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, f"There is already a category called {name!r}")

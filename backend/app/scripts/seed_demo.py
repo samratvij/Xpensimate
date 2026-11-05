@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.core.budget_evaluator import evaluate
 from app.core.config import get_settings
 from app.core.household import load_household
-from app.core.taxonomy import DEFAULT_PURPOSE, PERSON_LINES, PURPOSE_DEFS, UNCATEGORIZED
+from app.core.taxonomy import DEFAULT_PURPOSE, UNCATEGORIZED, person_lines, purpose_defs
 from app.db.base import SessionLocal
 from app.db.models import BudgetEnvelope, Receipt, ReceiptItem, RecurringExpense, Transaction
 from app.services.merchant import normalize_merchant
@@ -97,8 +97,8 @@ NOTES = {
 
 def _purposes() -> dict[str, str]:
     """"shared", "person:0", "person:1", "family" -> this household's purpose names (missing ones fall back)."""
-    people = [p.name for p in PURPOSE_DEFS if p.line and p.icon == "person"]
-    family = [p.name for p in PURPOSE_DEFS if p.line and p.icon == "family"]
+    people = [p.name for p in purpose_defs() if p.line and p.icon == "person"]
+    family = [p.name for p in purpose_defs() if p.line and p.icon == "family"]
     out = {"shared": DEFAULT_PURPOSE, "family": (family or [DEFAULT_PURPOSE])[0]}
     for i in range(2):
         out[f"person:{i}"] = people[i] if i < len(people) else (people[0] if people else DEFAULT_PURPOSE)
@@ -235,8 +235,8 @@ class Seeder:
 
     def budgets(self) -> None:
         limits = dict(BUDGETS)
-        family = next((p for p in PURPOSE_DEFS if p.line and p.icon == "family"), None)
-        for line, icon in PERSON_LINES.items():
+        family = next((p for p in purpose_defs() if p.line and p.icon == "family"), None)
+        for line, icon in person_lines().items():
             if icon != "family":
                 limits[line] = PERSON_BUDGET
         if family:
@@ -255,7 +255,7 @@ class Seeder:
         self.budgets()
         self.db.commit()
         # This month's budget alerts, as if the charges had arrived live.
-        evaluate(self.db, set(BUDGETS) | set(PERSON_LINES))
+        evaluate(self.db, set(BUDGETS) | set(person_lines()))
         return self.count
 
 

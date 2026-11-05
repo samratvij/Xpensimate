@@ -49,9 +49,9 @@ def _starter_rules() -> list[dict]:
     return rules
 
 
-def seed(db: Session) -> None:
-    # household.toml is the source of truth for accounts: new ones are added and changes (a new card's
-    # digits, a rename) applied on every start. Accounts removed from the file are kept, since charges point at them.
+def sync_accounts(db: Session) -> None:
+    """household.toml is the source of truth for accounts: new ones are added and changes (a new card's
+    digits, a rename) applied. Accounts removed from the file are kept, since charges point at them."""
     accounts = [
         {"id": a.id, "institution": a.institution, "account_name": a.name, "currency": a.currency,
          "card_last4": a.card_last4}
@@ -63,6 +63,10 @@ def seed(db: Session) -> None:
             "institution": stmt.excluded.institution, "account_name": stmt.excluded.account_name,
             "currency": stmt.excluded.currency, "card_last4": stmt.excluded.card_last4,
         }))
+
+
+def seed(db: Session) -> None:
+    sync_accounts(db)
     if db.scalar(select(CategoryRow.name).limit(1)) is None:
         db.add_all(CategoryRow(name=n, sort_order=i) for i, n in enumerate(DEFAULT_CATEGORIES))
     # Starter rules go in once; deleting some keeps them deleted (re-added only if all are gone).

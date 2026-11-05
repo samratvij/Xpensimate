@@ -1,12 +1,12 @@
 """Two-tier taxonomy: Category = what the money was spent on, Purpose = who it was for.
 
 Categories are editable and live in the categories table (app/services/categories.py); DefaultCategory is
-the starting set. Purposes come from household.toml. The household's budget lines are derived from the
+the starting set. Purposes come from household.toml (app/core/household.py). The household's budget lines are derived from the
 pair (see budget_line): shared spending is budgeted by category, personal and family spending by person.
 """
 from typing import Literal, get_args
 
-from app.core.household import PurposeDef, load_household
+from app.core.household import SHARED, PurposeDef, load_household
 
 DefaultCategory = Literal[
     # Fixed
@@ -35,55 +35,73 @@ DefaultCategory = Literal[
     "One-time",
 ]
 
-# The household's purposes and description come from household.toml (app/core/household.py).
-_HOUSEHOLD = load_household()
-HOUSEHOLD = _HOUSEHOLD.description
-PURPOSE_DEFS: tuple[PurposeDef, ...] = _HOUSEHOLD.purposes
-
 DEFAULT_CATEGORIES: tuple[str, ...] = get_args(DefaultCategory)
-PURPOSES: tuple[str, ...] = tuple(p.name for p in PURPOSE_DEFS)
-Purpose = Literal[PURPOSES]  # type: ignore[valid-type]
-
 UNCATEGORIZED = "Uncategorized"
-DEFAULT_PURPOSE = PURPOSES[0]
+# The shared purpose: always first, budgeted by category, and the default for anything not yet sorted.
+DEFAULT_PURPOSE = SHARED
 
-_BY_NAME = {p.name: p for p in PURPOSE_DEFS}
-# Purposes budgeted by person rather than by category.
-PERSONAL_PURPOSES: tuple[str, ...] = tuple(p.name for p in PURPOSE_DEFS if p.line)
-# Budget line -> icon kind, for the lines that belong to a person or family rather than a category.
-PERSON_LINES: dict[str, str] = {
-    line: p.icon for p in PURPOSE_DEFS for line in (p.transfer_line, p.line) if line
-}
-# Names a category can't take, since they already mean something else.
-RESERVED_NAMES = {UNCATEGORIZED, *PERSON_LINES}
+# Everything below reads the household as it is now (household.toml can change while the server runs).
+
+
+def household_description() -> str:
+    return load_household().description
+
+
+def purpose_defs() -> tuple[PurposeDef, ...]:
+    return load_household().purposes
+
+
+def purposes() -> tuple[str, ...]:
+    return tuple(p.name for p in purpose_defs())
+
+
+def personal_purposes() -> tuple[str, ...]:
+    """Purposes budgeted by person rather than by category."""
+    return tuple(p.name for p in purpose_defs() if p.line)
+
+
+def person_lines() -> dict[str, str]:
+    """Budget line -> icon kind, for the lines that belong to a person or family rather than a category."""
+    return {line: p.icon for p in purpose_defs() for line in (p.transfer_line, p.line) if line}
+
+
+def reserved_names() -> set[str]:
+    """Names a category can't take, since they already mean something else."""
+    return {UNCATEGORIZED, *person_lines()}
+
+
+def check_purpose(value: str) -> str:
+    if value not in purposes():
+        raise ValueError(f"Unknown purpose {value!r}; the household's are {', '.join(purposes())}")
+    return value
 
 
 def budget_lines(categories: list[str]) -> tuple[str, ...]:
-    return (*categories, *PERSON_LINES)
+    return (*categories, *person_lines())
 
 
 def purpose_guide() -> str:
     """The purpose list as the categorizer prompt describes it."""
-    return "\n".join(f'- "{p.name}": {p.guide}' for p in PURPOSE_DEFS)
+    return "\n".join(f'- "{p.name}": {p.guide}' for p in purpose_defs())
 
 
 def budget_line_condition(line: str, category_col, purpose_col):
     """SQL condition matching rows (transactions or receipt lines) that fall in a budget line; inverse of budget_line()."""
     from sqlalchemy import and_, not_
 
-    for p in PURPOSE_DEFS:
+    for p in purpose_defs():
         if line == p.transfer_line:
             return and_(purpose_col == p.name, category_col == "Transfer")
         if line == p.line:
             if p.transfer_line:
                 return and_(purpose_col == p.name, category_col != "Transfer")
             return purpose_col == p.name
-    return and_(category_col == line, not_(purpose_col.in_(PERSONAL_PURPOSES)))
+    return and_(category_col == line, not_(purpose_col.in_(personal_purposes())))
 
 
 def budget_line(category: str, purpose: str) -> str:
     """The budget line a (category, purpose) pair counts against (personal and family spending by person, shared spending by category)."""
-    p = _BY_NAME.get(purpose)
+    p = next((d for d in purpose_defs() if d.name == purpose), None)
     if p is None or p.line is None:
         return category
     if p.transfer_line and category == "Transfer":

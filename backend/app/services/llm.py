@@ -9,7 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, create_model
 
 from app.core.config import get_settings
-from app.core.taxonomy import DEFAULT_PURPOSE, HOUSEHOLD, Purpose, purpose_guide
+from app.core.taxonomy import DEFAULT_PURPOSE, household_description, purpose_guide, purposes
 
 log = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ CATEGORY_NOTES = {
 
 def household_guide(categories: list[str]) -> str:
     notes = "\n".join(f'- "{c}": {n}.' for c, n in CATEGORY_NOTES.items() if c in categories)
-    return f"""The household is {HOUSEHOLD}.
+    return f"""The household is {household_description()}.
 
 Category is what the money was spent on: {", ".join(categories)}.
 {notes}
@@ -50,16 +50,16 @@ Merchant strings come from bank alerts and may be truncated or contain store cod
 
 class LlmClassification(BaseModel):
     category: str
-    purpose: Purpose
+    purpose: str
     confidence: float
 
 
 def output_model(categories: list[str]) -> type[BaseModel]:
-    """The answer schema, built per request so Claude can only pick a category that exists right now."""
+    """The answer schema, built per request so Claude can only pick a category and purpose that exist right now."""
     return create_model(
         "LlmClassification",
         category=(Literal[tuple(categories)], ...),
-        purpose=(Purpose, ...),
+        purpose=(Literal[purposes()], ...),
         confidence=(float, ...),
     )
 

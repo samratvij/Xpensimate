@@ -3,14 +3,16 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, PlainSerializer, computed_field
+from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field, PlainSerializer, computed_field
 
-from app.core.taxonomy import Purpose, budget_line
+from app.core.taxonomy import DEFAULT_PURPOSE, budget_line, check_purpose
 
 NOTE_MAX = 1000
 
 # Money stays Decimal internally but goes over the wire as a JSON number.
 Money = Annotated[Decimal, PlainSerializer(float, return_type=float, when_used="json")]
+# One of the household's purposes, checked against household.toml as it is now.
+Purpose = Annotated[str, AfterValidator(check_purpose)]
 
 
 class _BudgetLine(BaseModel):
@@ -97,7 +99,7 @@ class SplitLine(BaseModel):
     sku_name: str = Field(min_length=1, max_length=255)
     price: Decimal = Field(max_digits=10, decimal_places=2)
     category: str = Field(min_length=1, max_length=64)
-    purpose: Purpose = "Shared"
+    purpose: Purpose = DEFAULT_PURPOSE
     note: str | None = Field(None, max_length=NOTE_MAX)
 
 
@@ -284,7 +286,7 @@ class RecurringIn(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     merchant_pattern: str | None = Field(None, min_length=2, max_length=128)
     category: str = Field(max_length=64)
-    purpose: Purpose = "Shared"
+    purpose: Purpose = DEFAULT_PURPOSE
     amount: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
     amount_tolerance: Decimal = Field(Decimal("0.25"), ge=0, le=1, decimal_places=2)
     cadence: Literal["weekly", "biweekly", "monthly"]

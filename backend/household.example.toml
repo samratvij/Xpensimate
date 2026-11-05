@@ -1,5 +1,6 @@
-# Your household: copy this file to household.toml (which git ignores) and describe yours.
-# Restart the api (docker compose restart api gmail-worker) after changing it.
+# Your household. The web app's setup wizard writes household.toml for you (and More → Household edits it);
+# this example shows the format if you'd rather write it by hand: copy it to household.toml (which git ignores).
+# Hand-edited people apply right away; hand-edited accounts after: docker compose restart api
 
 # Who you are, in a few words. The categorizer (Claude) reads this to guess who a purchase was for.
 description = "two people in Toronto, Canada, Alex and Sam, who also support Alex's parents"

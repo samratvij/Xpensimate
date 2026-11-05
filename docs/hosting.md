@@ -18,7 +18,6 @@ Both start the same way:
 ```bash
 git clone https://github.com/samratvij/Xpensimate.git && cd Xpensimate/backend
 cp .env.example .env                       # then fill it in (below)
-cp household.example.toml household.toml   # then describe your household
 ```
 
 In `.env`, generate secrets with `openssl rand -hex 32` for `POSTGRES_PASSWORD` and `API_TOKEN`, and set
@@ -26,8 +25,9 @@ In `.env`, generate secrets with `openssl rand -hex 32` for `POSTGRES_PASSWORD` 
 so edits show who made them. `ANTHROPIC_API_KEY` is optional but recommended: without it there is no
 automatic categorization fallback or receipt reading.
 
-In `household.toml`, list the people spending is for and your cards (see the comments in the file).
-You can change it later; restart the API afterwards.
+Your household (who spending is for, and your cards) is set up in the app: the first time you sign in to
+the web app, a short setup wizard asks for it, and More → Household changes it later. It's saved in
+`backend/household.toml`, which you can also write by hand from `household.example.toml` if you prefer.
 
 ## Option A: home server with Tailscale
 

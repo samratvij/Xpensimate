@@ -194,11 +194,11 @@ def test_refusal_fallback_only_where_supported():
 
 
 def test_prompt_and_budget_lines_come_from_the_purpose_list():
-    from app.core.taxonomy import PURPOSE_DEFS, budget_line
+    from app.core.taxonomy import budget_line, purpose_defs
     from app.services.llm import household_guide
 
     guide = household_guide(["Grocery", "Transfer"])
-    assert all(f'- "{p.name}": ' in guide for p in PURPOSE_DEFS)
+    assert all(f'- "{p.name}": ' in guide for p in purpose_defs())
     assert "Alex and Sam" in guide
     assert budget_line("Grocery", "Shared") == "Grocery"
     assert budget_line("Grocery", "Sam") == "Sam Personal"

@@ -162,8 +162,8 @@ flowchart LR
 
 ### What + who = the budget line
 
-Two questions decide where a charge is budgeted. You define the people in `household.toml`; the apps pick
-them up from the server automatically.
+Two questions decide where a charge is budgeted. You name the people in the setup wizard (or later under
+More → Household); the apps pick them up from the server right away.
 
 | Charge | What (category) | Who (purpose) | Budget line |
 |---|---|---|---|
@@ -178,13 +178,12 @@ them up from the server automatically.
 > browser, and optionally an [Anthropic API key](https://console.anthropic.com/) for automatic
 > categorization and receipt reading.
 
-**1. Get the code and configure it**
+**1. Get the code and set your secrets**
 
 ```bash
 git clone https://github.com/samratvij/Xpensimate.git
 cd Xpensimate/backend
 cp .env.example .env                       # passwords and tokens: openssl rand -hex 32
-cp household.example.toml household.toml   # your people and your cards
 ```
 
 **2. Start the server**, choosing where it lives:
@@ -197,19 +196,23 @@ cp household.example.toml household.toml   # your people and your cards
 
 Step-by-step for both: **[docs/hosting.md](docs/hosting.md)**.
 
-**3. Connect an app**
+**3. Set up your household**: open `https://<your-server>/app/` and sign in with your token. A short wizard
+asks who spending is for and which cards you use; change it any time under More → Household.
+
+**4. Connect your phone**
 
 - **Android:** build the app from `android/` ([below](#-the-apps)), then enter your server address and token.
-- **iPhone / laptop:** open `https://<your-server>/app/` and add it to your home screen.
+- **iPhone:** add the web app to your home screen (Share → Add to Home Screen).
 
-**Just want to look around?** On a fresh install, fill it with six months of made-up spending for the
-example household (it refuses to run once you have real transactions):
+**Just want to look around?** Skip the wizard: use the example household, then fill it with six months of
+made-up spending (it refuses to run once you have real transactions):
 
 ```bash
+cp household.example.toml household.toml && docker compose restart api
 docker compose exec api python -m app.scripts.seed_demo
 ```
 
-**4. Optional extras**
+**5. Optional extras**
 
 - 📧 [Bank alert emails via Gmail](docs/gmail-setup.md)
 - 🔔 [Push notifications for budget alerts](docs/firebase-setup.md)
@@ -408,7 +411,7 @@ More on the design choices: **[docs/architecture.md](docs/architecture.md)**.
 - [x] Budgets, push alerts, recurring bills, month review
 - [x] Home-server and VPS hosting guides
 - [x] Screenshots and a demo dataset
-- [ ] First-run setup wizard in the web app (no editing `household.toml` by hand)
+- [x] First-run setup wizard in the web app (no editing `household.toml` by hand)
 - [ ] Generic history import from any spreadsheet or CSV
 - [ ] Banks beyond Canada (contributions very welcome)
 - [ ] Optional encrypted off-site backups
