@@ -1,0 +1,9 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+# Firebase client config (added in M7c) is per-project; keep it out of git.
+app/google-services.json

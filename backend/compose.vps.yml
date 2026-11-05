@@ -1,0 +1,33 @@
+# VPS hosting: Caddy in front of the API with automatic HTTPS (Let's Encrypt), so the API port is not
+# published at all. Set DOMAIN in .env and point its DNS A/AAAA record at the VPS, then:
+#   docker compose -f docker-compose.yml -f compose.vps.yml up -d --build
+# Needs Docker Compose 2.24+ (for !reset). See docs/hosting.md.
+services:
+  api:
+    ports: !reset []
+
+  caddy:
+    image: caddy:2
+    container_name: xpensimate-caddy
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [xpensimate]
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 128m
+
+volumes:
+  caddy_data:
+    name: xpensimate_caddy_data
+  caddy_config:
+    name: xpensimate_caddy_config

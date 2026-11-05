@@ -1,0 +1,67 @@
+# The household the tests run with (fictional).
+description = "two people in Toronto, Canada, Alex and Sam, who also support their parents"
+
+[[purposes]]
+name = "Shared"
+guide = "joint household spending (groceries, rent, utilities, eating out, household items). The default."
+
+[[purposes]]
+name = "Alex"
+guide = "Alex's own spending (their gym or classes, haircuts, health appointments, personal subscriptions, clothes)."
+budget_line = "Alex Personal"
+
+[[purposes]]
+name = "Sam"
+guide = "Sam's own spending (their gym or classes, haircuts, health appointments, personal subscriptions, clothes)."
+budget_line = "Sam Personal"
+
+[[purposes]]
+name = "Sam Abroad"
+guide = "Sam's spending abroad (foreign merchants)."
+budget_line = "Sam Abroad"
+icon = "abroad"
+
+[[purposes]]
+name = "Parents"
+guide = "spending for the parents (money sent to them, shopping or appointments for them)."
+budget_line = "Parents Shopping"
+transfer_budget_line = "Parents"
+icon = "family"
+
+# Every account the parsers can fall back to, plus a second RBC card; no card digits (tests set them).
+[[accounts]]
+id = "ws_cash"
+institution = "Wealthsimple"
+name = "Wealthsimple Cash"
+[[accounts]]
+id = "ws_credit"
+institution = "Wealthsimple"
+name = "Wealthsimple Credit Card"
+[[accounts]]
+id = "tangerine_cheq"
+institution = "Tangerine"
+name = "Tangerine Chequing"
+[[accounts]]
+id = "tangerine_mastercard"
+institution = "Tangerine"
+name = "Tangerine Money-Back World Mastercard"
+[[accounts]]
+id = "pc_mastercard"
+institution = "PC Financial"
+name = "PC Financial Mastercard"
+[[accounts]]
+id = "pc_money"
+institution = "PC Financial"
+name = "PC Money Account"
+[[accounts]]
+id = "ctfs_triangle"
+institution = "Canadian Tire Financial Services"
+name = "Triangle Mastercard"
+[[accounts]]
+id = "rbc_visa"
+institution = "RBC"
+name = "RBC ION Visa"
+[[accounts]]
+id = "rbc_sam"
+institution = "RBC"
+name = "RBC credit card (Sam)"

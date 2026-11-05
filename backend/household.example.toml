@@ -1,0 +1,66 @@
+# Your household: copy this file to household.toml (which git ignores) and describe yours.
+# Restart the api (docker compose restart api gmail-worker) after changing it.
+
+# Who you are, in a few words. The categorizer (Claude) reads this to guess who a purchase was for.
+description = "two people in Toronto, Canada, Alex and Sam, who also support Alex's parents"
+
+# Purposes: who a purchase was for. The first one is the shared default and is budgeted by category
+# (Grocery, Eating Out, ...). The others get their own budget line, shown under "People" in the apps.
+#   name                  what the apps show and the categorizer picks from
+#   guide                 how the categorizer recognises it (finishes the sentence '"<name>": ...')
+#   budget_line           the budget line their spending counts against
+#   transfer_budget_line  optional: money sent to them (category Transfer) counts here instead
+#   icon                  person | abroad | family
+# Avoid budget line names that are also category names.
+
+[[purposes]]
+name = "Shared"
+guide = "joint household spending (groceries, rent, utilities, eating out, household items). The default."
+
+[[purposes]]
+name = "Alex"
+guide = "Alex's own spending (their gym or classes, haircuts, health appointments, personal subscriptions, clothes)."
+budget_line = "Alex Personal"
+
+[[purposes]]
+name = "Sam"
+guide = "Sam's own spending (their gym or classes, haircuts, health appointments, personal subscriptions, clothes)."
+budget_line = "Sam Personal"
+
+[[purposes]]
+name = "Parents"
+guide = "spending for Alex's parents (money sent to them, shopping or appointments for them)."
+budget_line = "Parents Shopping"
+transfer_budget_line = "Parents"
+icon = "family"
+
+# Example of spending in another country, kept apart from everyday personal spending:
+# [[purposes]]
+# name = "Sam Abroad"
+# guide = "Sam's spending while abroad (foreign merchants, foreign currency)."
+# budget_line = "Sam Abroad"
+# icon = "abroad"
+
+# Accounts: your cards and bank accounts. Alerts are matched to an account by card_last4 (in quotes).
+# These ids are the ones the bank parsers fall back to when an alert has no card digits, so keep them
+# for the banks you use; add more accounts with any id you like.
+#   Tangerine: tangerine_mastercard, tangerine_cheq    PC Financial: pc_mastercard, pc_money
+#   Canadian Tire: ctfs_triangle    Wealthsimple: ws_credit, ws_cash    RBC: matched by card digits only
+
+[[accounts]]
+id = "tangerine_mastercard"
+institution = "Tangerine"
+name = "Tangerine Money-Back World Mastercard"
+card_last4 = "1234"
+
+[[accounts]]
+id = "ws_credit"
+institution = "Wealthsimple"
+name = "Wealthsimple Credit Card"
+card_last4 = "5678"
+
+[[accounts]]
+id = "rbc_visa"
+institution = "RBC"
+name = "RBC Visa (Sam)"
+card_last4 = "4321"

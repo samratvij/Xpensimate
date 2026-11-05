@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Xpensimate · Import statement</title>
+<style>
+  :root { --bg:#f7f7f8; --card:#fff; --text:#1d1d1f; --muted:#6b6b73; --line:#e3e3e8; --accent:#3b5bdb;
+          --good:#2b8a3e; --warn:#c77700; --bad:#c92a2a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#121214; --card:#1c1c20; --text:#ececf1; --muted:#9a9aa5; --line:#2e2e35; --accent:#7c94ff;
+            --good:#69db7c; --warn:#ffb84d; --bad:#ff8787; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; } h2 { font-size: 16px; margin: 24px 0 8px; }
+  .muted { color: var(--muted); } .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  form.row { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--muted); }
+  input, select, button { font:inherit; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--text); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+  .chip { padding:4px 10px; border-radius:999px; border:1px solid var(--line); font-size:13px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  td.amt, th.amt { text-align:right; white-space:nowrap; font-variant-numeric: tabular-nums; }
+  .neg { color: var(--good); } .err { color: var(--bad); } .warn { color: var(--warn); }
+  details summary { cursor:pointer; margin:16px 0 8px; font-weight:600; }
+  progress { width:100%; height:10px; }
+  .scroll { overflow-x:auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Import a bank statement</h1>
+  <p class="muted">Adds only what the app is missing, confirms what it already has, and keeps card payments out of your spending. Nothing is saved until you press Import.</p>
+
+  <div class="card" id="token-card" hidden>
+    <form class="row" id="token-form">
+      <label style="flex:1">API token (from the server's backend/.env)
+        <input type="password" id="token" required autocomplete="off"></label>
+      <button class="primary">Save token</button>
+    </form>
+    <p class="muted" style="margin:8px 0 0">Kept in this browser only.</p>
+  </div>
+
+  <div class="card" id="upload-card" hidden>
+    <form class="row" id="upload-form">
+      <label style="flex:1">Statement (CSV or RBC PDF) <input type="file" id="file" accept=".csv,text/csv,.pdf,application/pdf" required></label>
+      <label>Account <select id="account"><option value="">Detect from file</option></select></label>
+      <label>Month (optional) <input type="month" id="month"></label>
+      <button class="primary" id="preview-btn">Preview</button>
+    </form>
+    <p class="muted" style="margin:8px 0 0">Canadian Tire, PC Financial, Tangerine and Wealthsimple CSV exports, and RBC PDF statements. <a href="#" id="forget">Forget token</a></p>
+    <p class="err" id="upload-error"></p>
+  </div>
+
+  <section id="preview" hidden></section>
+</main>
+<script>
+const api = (path, opts = {}) => fetch(`/api/v1${path}`, {
+  ...opts, headers: { Authorization: `Bearer ${localStorage.getItem("xpensimate_token")}`, ...(opts.headers || {}) },
+}).then(async r => {
+  if (r.status === 401) { localStorage.removeItem("xpensimate_token"); start(); throw new Error("The token was rejected."); }
+  const body = r.headers.get("content-type")?.includes("json") ? await r.json() : null;
+  if (!r.ok) throw new Error(body?.detail ? (typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail)) : `Error ${r.status}`);
+  return body;
+});
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const money = a => { const n = Number(a); return `<span class="${n < 0 ? "neg" : ""}">${n < 0 ? "−" : ""}$${Math.abs(n).toFixed(2)}</span>`; };
+const $ = id => document.getElementById(id);
+const LABELS = { match: "Already in the app", add: "Missing → will be added", payment: "Card payments → not an expense",
+                 unclear: "Need your decision", imported: "Already imported", outside: "Outside the chosen month" };
+
+async function start() {
+  const has = !!localStorage.getItem("xpensimate_token");
+  $("token-card").hidden = has; $("upload-card").hidden = !has;
+  if (has) {
+    try {
+      const accounts = await api("/accounts");
+      $("account").innerHTML = `<option value="">Detect from file</option>` +
+        accounts.map(a => `<option value="${esc(a.id)}">${esc(a.institution)} · ${esc(a.account_name)}</option>`).join("");
+    } catch (e) { $("upload-error").textContent = e.message; }
+  }
+}
+$("token-form").onsubmit = e => { e.preventDefault(); localStorage.setItem("xpensimate_token", $("token").value.trim()); start(); };
+$("forget").onclick = e => { e.preventDefault(); localStorage.removeItem("xpensimate_token"); $("preview").hidden = true; start(); };
+
+$("upload-form").onsubmit = async e => {
+  e.preventDefault();
+  $("upload-error").textContent = ""; $("preview-btn").disabled = true;
+  const form = new FormData();
+  form.append("file", $("file").files[0]);
+  if ($("account").value) form.append("account_id", $("account").value);
+  if ($("month").value) form.append("month", $("month").value);
+  try { render(await api("/statements/preview", { method: "POST", body: form })); }
+  catch (err) { $("upload-error").textContent = err.message; }
+  finally { $("preview-btn").disabled = false; }
+};
+
+function table(rows, extra = () => "", extraHead = "") {
+  return `<div class="scroll"><table><thead><tr><th>Date</th><th>Merchant</th><th>Bank category</th>${extraHead}<th class="amt">Amount</th></tr></thead><tbody>` +
+    rows.map(r => `<tr><td>${esc(r.date)}</td><td>${esc(r.merchant)}${r.kind === "refund" ? ' <span class="muted">(refund)</span>' : ""}${r.kind === "interest" ? ' <span class="muted">(interest)</span>' : ""}</td>` +
+      `<td class="muted">${esc(r.bank_category)}</td>${extra(r)}<td class="amt">${money(r.amount)}</td></tr>`).join("") + "</tbody></table></div>";
+}
+
+function render(p) {
+  const by = a => p.rows.filter(r => r.action === a);
+  const unclear = by("unclear");
+  const section = $("preview");
+  section.hidden = false;
+  section.innerHTML = `
+    <h2>${esc(p.filename)} · ${esc(p.account_id)} · ${esc(p.period_start ?? "")} to ${esc(p.period_end ?? "")}</h2>
+    <div class="chips">${Object.entries(p.counts).map(([k, v]) => `<span class="chip">${esc(LABELS[k] ?? k)}: <b>${v}</b></span>`).join("")}</div>
+    ${unclear.length ? `<h2 class="warn">Need your decision (${unclear.length})</h2>
+      <p class="muted">Several charges in the app fit these rows equally well. Pick the one it is, add it as new, or skip it.</p>
+      ${table(unclear, r => `<td><select data-index="${r.index}" class="decision">
+          <option value="">Choose…</option>
+          ${r.candidates.map(c => `<option value="match:${esc(c.id)}">Is ${esc(c.merchant)} on ${esc(c.date)} (${esc(c.source)})</option>`).join("")}
+          <option value="add">Add as a new charge</option><option value="skip">Skip</option></select></td>`, "<th>Decision</th>")}` : ""}
+    ${by("add").length ? `<h2>Missing from the app → will be added (${by("add").length})</h2>
+      <p class="muted">Categorized with your rules, your history, then Claude.</p>${table(by("add"))}` : ""}
+    ${by("payment").length ? `<h2>Card payments → recorded as not an expense (${by("payment").length})</h2>
+      ${table(by("payment"), r => `<td class="muted">${r.pays ? `also excludes ${esc(r.pays.merchant)} ${esc(r.pays.date)} (${esc(r.pays.source)})` : ""}</td>`, "<th></th>")}` : ""}
+    ${p.missing.length ? `<h2 class="warn">In the app but not on this statement (${p.missing.length})</h2>
+      <p class="muted">Declined or reversed charges, duplicates, or ones on another card. Check them in the app.</p>
+      <div class="scroll"><table><thead><tr><th>Date</th><th>Merchant</th><th>From</th><th class="amt">Amount</th></tr></thead><tbody>
+      ${p.missing.map(m => `<tr><td>${esc(m.date)}</td><td>${esc(m.merchant)}</td><td class="muted">${esc(m.source)}</td><td class="amt">${money(m.amount)}</td></tr>`).join("")}
+      </tbody></table></div>` : ""}
+    ${by("match").length ? `<details><summary>Already in the app (${by("match").length})</summary>
+      ${table(by("match"), r => `<td class="muted">${esc(r.transaction.source)} ${esc(r.transaction.date)}</td>`, "<th>Seen as</th>")}</details>` : ""}
+    ${by("imported").length ? `<details><summary>Already imported earlier (${by("imported").length})</summary>${table(by("imported"))}</details>` : ""}
+    <p style="margin-top:24px"><button class="primary" id="commit">Import</button> <span class="muted" id="commit-note"></span></p>
+    <div id="progress"></div>`;
+
+  const decisions = () => Object.fromEntries([...section.querySelectorAll(".decision")].filter(s => s.value).map(s => [s.dataset.index, s.value]));
+  const update = () => {
+    const left = unclear.length - Object.keys(decisions()).length;
+    const nothing = !p.rows.some(r => ["add", "payment", "match", "unclear"].includes(r.action));
+    $("commit").disabled = left > 0 || nothing;
+    $("commit-note").textContent = left > 0 ? `Decide ${left} more row(s) first.` : nothing ? "Nothing to import." : "";
+  };
+  section.querySelectorAll(".decision").forEach(s => s.onchange = update);
+  update();
+
+  $("commit").onclick = async () => {
+    $("commit").disabled = true;
+    try {
+      await api(`/statements/${p.id}/commit`, { method: "POST", headers: { "Content-Type": "application/json" },
+                                                body: JSON.stringify({ decisions: decisions() }) });
+      poll(p.id, p.rows.length);
+    } catch (err) { $("progress").innerHTML = `<p class="err">${esc(err.message)}</p>`; $("commit").disabled = false; }
+  };
+}
+
+async function poll(id, total) {
+  const s = await api(`/statements/${id}`);
+  $("progress").innerHTML = `<progress value="${s.processed}" max="${total}"></progress><p class="muted">${s.processed} of ${total} rows…</p>`;
+  if (s.status === "importing") return setTimeout(() => poll(id, total), 1000);
+  const r = s.result || {};
+  $("progress").innerHTML = s.status === "done"
+    ? `<p><b>Done.</b> Added ${r.added ?? 0}, confirmed ${r.matched ?? 0}, card payments ${r.payment ?? 0}, skipped ${r.skipped ?? 0}.</p>`
+    : `<p class="err">The import stopped: ${esc(r.error ?? "unknown error")}. Rows before it were saved; importing the file again picks up the rest.</p>`;
+}
+start();
+</script>
+</body>
+</html>

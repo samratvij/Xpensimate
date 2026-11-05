@@ -1,0 +1,77 @@
+# Xpensimate runs isolated from anything else on the host:
+# its own project name, containers, network, volume and Postgres instance.
+name: xpensimate
+
+services:
+  db:
+    image: postgres:16
+    container_name: xpensimate-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-expense}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-expense}
+    # Localhost-only, for psql debugging (DB_HOST_PORT in .env if 5434 is taken).
+    ports:
+      - "127.0.0.1:${DB_HOST_PORT:-5434}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db-init:/docker-entrypoint-initdb.d:ro
+    networks: [xpensimate]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-expense} -d ${POSTGRES_DB:-expense}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    image: xpensimate-api
+    container_name: xpensimate-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-expense}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-expense}
+      TEST_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-expense}:${POSTGRES_PASSWORD}@db:5432/expense_test
+    depends_on:
+      db:
+        condition: service_healthy
+    # Bind only to the Tailscale IP (API_BIND_HOST in .env), never 0.0.0.0.
+    ports:
+      - "${API_BIND_HOST:-127.0.0.1}:8000:8000"
+    volumes:
+      - .:/app
+    networks: [xpensimate]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  # Gmail -> Pub/Sub ingestion. Opt-in until GCP/OAuth setup is done: docker compose --profile gmail up -d
+  gmail-worker:
+    image: xpensimate-api
+    container_name: xpensimate-gmail-worker
+    restart: unless-stopped
+    profiles: [gmail]
+    command: ["python", "-m", "app.daemons.gmail_subscriber"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-expense}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-expense}
+    depends_on:
+      api:
+        condition: service_healthy  # the api container runs migrations on start
+    volumes:
+      - .:/app
+    networks: [xpensimate]
+    mem_limit: 256m
+
+networks:
+  xpensimate:
+    name: xpensimate
+
+volumes:
+  pgdata:
+    name: xpensimate_pgdata

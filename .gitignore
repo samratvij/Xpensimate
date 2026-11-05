@@ -1,0 +1,30 @@
+# OS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# Dependencies / builds
+node_modules/
+dist/
+build/
+
+# Env
+.env
+# Your household (people, accounts, card digits); household.example.toml is the template.
+backend/household.toml
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Secrets / local data
+credentials.json
+token.json
+backend/data/
+backend/secrets/
+backend/backups/
+__pycache__/
+.pytest_cache/
