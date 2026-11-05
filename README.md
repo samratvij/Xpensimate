@@ -19,13 +19,27 @@ and *who* it was for. Budgets, bills and alerts flow out. Your money data never 
 ![Claude](https://img.shields.io/badge/AI-Claude-d97757)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
-[Features](#-features) · [How it works](#-how-it-works) · [Quick start](#-quick-start) ·
+[Screenshots](#-screenshots) · [Features](#-features) · [How it works](#-how-it-works) · [Quick start](#-quick-start) ·
 [Banks](#-supported-banks) · [Under the hood](#-under-the-hood) · [Roadmap](#%EF%B8%8F-roadmap) ·
 [Contributing](CONTRIBUTING.md)
 
 </div>
 
 ---
+
+## 📸 Screenshots
+
+<div align="center">
+
+| Budget at a glance | Month-end review | Every charge, sorted |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/budget.png" alt="Budget screen: October spending against budget, a six-month trend and per-line budgets" width="240" /> | <img src="docs/screenshots/month-review.png" alt="Month review: each budget line against its budget and the usual month" width="240" /> | <img src="docs/screenshots/activity.png" alt="Activity: charges by day with category, and uncategorized ones to check" width="240" /> |
+| **One receipt, many budgets** | **Bills you can see coming** | **Web app for iPhone and laptops** |
+| <img src="docs/screenshots/receipt.png" alt="A Costco receipt read line by line, each line with its own category and person" width="240" /> | <img src="docs/screenshots/bills.png" alt="Bills: paid and upcoming bills for the month" width="240" /> | <img src="docs/screenshots/web-app.png" alt="The web app's home screen" width="240" /> |
+
+<sub>Demo data for a fictional household: try it yourself with <code>python -m app.scripts.seed_demo</code>.</sub>
+
+</div>
 
 ## 🤔 Why Xpensimate?
 
@@ -187,6 +201,13 @@ Step-by-step for both: **[docs/hosting.md](docs/hosting.md)**.
 
 - **Android:** build the app from `android/` ([below](#-the-apps)), then enter your server address and token.
 - **iPhone / laptop:** open `https://<your-server>/app/` and add it to your home screen.
+
+**Just want to look around?** On a fresh install, fill it with six months of made-up spending for the
+example household (it refuses to run once you have real transactions):
+
+```bash
+docker compose exec api python -m app.scripts.seed_demo
+```
 
 **4. Optional extras**
 
@@ -386,7 +407,7 @@ More on the design choices: **[docs/architecture.md](docs/architecture.md)**.
 - [x] Receipt reading and line-level matching
 - [x] Budgets, push alerts, recurring bills, month review
 - [x] Home-server and VPS hosting guides
-- [ ] Screenshots and a demo dataset
+- [x] Screenshots and a demo dataset
 - [ ] First-run setup wizard in the web app (no editing `household.toml` by hand)
 - [ ] Generic history import from any spreadsheet or CSV
 - [ ] Banks beyond Canada (contributions very welcome)

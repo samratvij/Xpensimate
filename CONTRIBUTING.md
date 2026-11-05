@@ -14,6 +14,10 @@ docker compose up -d db
 docker compose run --rm api pytest -q
 ```
 
+To click around with realistic data, start the stack with `household.example.toml` copied to
+`household.toml`, then `docker compose exec api python -m app.scripts.seed_demo`. Debug builds of the
+Android app can reach a server on your computer over plain HTTP (`http://10.0.2.2:8000` from the emulator).
+
 Tests use the fictional household in `backend/tests/household.toml`. The Android app builds with
 `cd android && ./gradlew assembleDebug` (JDK 17). CI runs both on every push.
 
