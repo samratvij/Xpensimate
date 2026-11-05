@@ -65,8 +65,8 @@ def test_detects_steady_series_and_skips_noise(db):
 
 
 def test_biweekly_detection(db):
-    history(db, "Coinamatic", [TODAY - timedelta(days=14 * i) for i in range(5, 0, -1)], [50] * 5, "Laundry")
-    assert [(d.name, d.cadence) for d in detect(db, TODAY)] == [("Coinamatic", "biweekly")]
+    history(db, "Laundromat Plus", [TODAY - timedelta(days=14 * i) for i in range(5, 0, -1)], [50] * 5, "Laundry")
+    assert [(d.name, d.cadence) for d in detect(db, TODAY)] == [("Laundromat Plus", "biweekly")]
 
 
 def test_detection_does_not_overwrite_known_items(db, client):

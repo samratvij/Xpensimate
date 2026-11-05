@@ -37,7 +37,10 @@ OVERDUE_GRACE_DAYS = 3
 # A payment pays a due date at most this share of a period away from it (early or late).
 MAX_PAYMENT_OFFSET = 0.6
 # Hand-typed names (from imported history) that are recurring but say nothing about the merchant on a card statement.
-NO_PATTERN_KEYS = {"rent", "hydro", "parking", "internet and phone", "car insurance", "physio", "pilates", "rent + parking"}
+NO_PATTERN_KEYS = {
+    "rent", "mortgage", "hydro", "electricity", "utilities", "parking", "internet", "phone", "internet and phone",
+    "insurance", "car insurance", "gym", "daycare", "tuition", "rent + parking",
+}
 
 
 def add_months(day: date, months: int, anchor_day: int) -> date:

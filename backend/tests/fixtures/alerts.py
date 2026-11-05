@@ -47,7 +47,7 @@ Card ending in: 3456"""
 # Real RBC alert (Nov 2026; card number redacted). The plain-text part keeps HTML entities.
 RBC_PURCHASE_SUBJECT = "You made a purchase."
 RBC_PURCHASE_BODY = """&#847; &zwnj; &#8199; &#847; &zwnj; &#8199;
-https://click.alerts.rbc.com/?qs=ABh7Im
+https://click.alerts.rbc.com/?qs=EXAMPLE
 Hello,
 As requested, we&rsquo;re letting you know that a purchase of $22.59 was made on your RBC Royal Bank credit card account ************4321 on November 04, 2026 towards CANADIAN TIRE STORE #2.
 If you don&rsquo;t recognize this transaction, please call us at 1&#8209;800&#8209;769&#8209;2512 (available 24/7) and we&rsquo;ll be happy to help.
@@ -60,7 +60,7 @@ November 04, 2026
 Transaction Description:
 CANADIAN TIRE STORE #2
 Thank you!
-https://view.alerts.rbc.com/?qs=ACF7Im
+https://view.alerts.rbc.com/?qs=EXAMPLE
 View in a browser"""
 
 # Synthetic variants of the same template.

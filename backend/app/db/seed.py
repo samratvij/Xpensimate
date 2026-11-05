@@ -17,20 +17,19 @@ STARTER_RULES: list[tuple[str, str]] = [
     )],
     *[(p, "Eating Out") for p in (
         "Tim Hortons", "Starbucks", "McDonalds", "Subway", "A&W", "Uber Eats", "UberEats", "DoorDash",
-        "Skip The Dishes", "SkipTheDishes", "Pizza Pizza", "Chipotle", "Second Cup", "Bridgehead",
+        "Skip The Dishes", "SkipTheDishes", "Pizza Pizza", "Chipotle", "Second Cup",
     )],
     *[(p, "Gas & Parking") for p in (
-        "Presto", "OC Transpo", "Petro-Canada", "Shell", "Esso", "Pioneer", "Ultramar", "Green P",
+        "Presto", "Petro-Canada", "Shell", "Esso", "Pioneer", "Ultramar", "Green P",
         "Indigo Park", "PayByPhone",
     )],
     *[(p, "Health & Fitness") for p in ("Shoppers Drug Mart", "Rexall", "GoodLife")],
     *[(p, "Entertainment") for p in ("Cineplex", "LCBO")],
     *[(p, "Subscriptions") for p in ("Netflix", "Spotify", "Disney Plus", "Crave")],
     *[(p, "Wifi + 5G") for p in ("Rogers", "Bell Canada", "Fido", "Koodo", "Virgin Plus", "Freedom Mobile")],
-    *[(p, "Hydro") for p in ("Hydro Ottawa", "Hydro-Ottawa", "Toronto Hydro", "Hydro One", "Enbridge")],
+    *[(p, "Hydro") for p in ("Toronto Hydro", "Hydro One", "Hydro-Quebec", "BC Hydro", "Enbridge", "FortisBC")],
     *[(p, "Household") for p in ("Canadian Tire", "Home Depot", "IKEA", "Dollarama", "Rona")],
     *[(p, "Shopping") for p in ("Amazon", "Best Buy", "Winners")],
-    *[(p, "Laundry") for p in ("Coinamatic",)],
     *[(p, "Travel") for p in ("Air Canada", "WestJet", "Porter Airlines", "Airbnb", "Expedia", "VIA Rail")],
     *[(p, "Government & Fees") for p in ("DriveTest", "ServiceOntario")],
 ]

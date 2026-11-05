@@ -31,7 +31,7 @@ def matches_pattern(pattern: str, *names: str) -> bool:
 _HAS_DIGIT = re.compile(r"\S*\d\S*")
 # Trailing location words in card descriptors ("TIM HORTONS #1000 TORONTO ON" -> "Tim Hortons").
 _CITY_SUFFIX = re.compile(
-    r"\s+(Downtown|Toronto|Toro|Ottawa|Gatineau|Montreal|Mississauga|Brampton|Hamilton|Vancouver|Calgary|Edmonton|Winnipeg|Halifax)"
+    r"\s+(Downtown|Toronto|Toro|Ottawa|Montreal|Mississauga|Brampton|Hamilton|Vancouver|Calgary|Edmonton|Winnipeg|Halifax)"
     r"(\s.*)?$",
     re.IGNORECASE,
 )

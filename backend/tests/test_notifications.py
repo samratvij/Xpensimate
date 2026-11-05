@@ -22,7 +22,7 @@ def send(client, title, text, key="0|com.wealthsimple.trade|1|null|10514", packa
         ("Wealthsimple", "You spent $12.34 at Tim Hortons", "12.34", "Tim Hortons", "ws_credit"),
         ("Credit card", "Purchase of $1,204.50 at BEST BUY #123 with your card ending in 4321.", "1204.50", "BEST BUY #123", "ws_credit"),
         ("Card purchase", "$9.29 at Corner Creamery Toronto", "9.29", "Corner Creamery Toronto", "ws_credit"),
-        ("Cash card", "You spent $5.00 at Bridgehead using your Cash card", "5.00", "Bridgehead", "ws_cash"),
+        ("Cash card", "You spent $5.00 at Second Cup using your Cash card", "5.00", "Second Cup", "ws_cash"),
         ("Refund", "You were refunded $423.73 from Sports Outlet Midtown", "-423.73", "Sports Outlet Midtown", "ws_credit"),
         # Real sample: the merchant is the title.
         ("NORTHSIDE BOXING ", "You made a recurring payment for $75.40 with your credit card.", "75.40",
@@ -134,8 +134,8 @@ def test_bank_email_and_wallet_notification_are_one_purchase(client, db):
 
 
 def test_two_real_purchases_from_one_feed_stay_two(client):
-    a = send(client, "Wealthsimple", "You spent $4.50 at Bridgehead", key="k1", at="2026-11-04T13:00:00+00:00").json()
-    b = send(client, "Wealthsimple", "You spent $4.50 at Bridgehead", key="k2", at="2026-11-04T16:00:00+00:00").json()
+    a = send(client, "Wealthsimple", "You spent $4.50 at Second Cup", key="k1", at="2026-11-04T13:00:00+00:00").json()
+    b = send(client, "Wealthsimple", "You spent $4.50 at Second Cup", key="k2", at="2026-11-04T16:00:00+00:00").json()
     assert (a["status"], b["status"]) == ("created", "created")
 
 
