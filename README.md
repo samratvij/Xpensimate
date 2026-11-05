@@ -1,140 +1,402 @@
+<div align="center">
+
+<img src="backend/app/web/app/icon-512.png" alt="Xpensimate" width="104" />
+
 # Xpensimate
 
-A self-hosted expense tracker for a household. Bank alerts, phone notifications, receipts and statements
-come in; spending is categorized by what it was and who it was for; budgets, bills and alerts go out.
-Your data stays on a server you control: a spare machine at home or a small VPS.
+**The self-hosted expense tracker that fills itself in.**
 
-- **Automatic capture**: bank alert emails (Gmail), Wealthsimple and Google Wallet purchase notifications
-  (Android), and month-end statement imports that catch anything missed.
-- **Categories and people**: every charge gets a category (Grocery, Eating Out, …) and a purpose (who it
-  was for). Shared spending is budgeted by category, personal spending per person.
-- **Receipts**: snap a photo, Claude reads the line items, and the receipt is matched to the card charge,
-  so a Costco run can count as groceries, household and one person's shopping at once.
-- **Budgets and bills**: monthly budgets per line with push alerts, recurring bills tracked as paid,
-  upcoming or overdue, and a projected month-end total.
-- **Apps**: a native Android app and a web app (works well on iPhone from the home screen).
+Bank alerts, phone notifications, receipts and statements flow in. Every charge is sorted by *what* it was
+and *who* it was for. Budgets, bills and alerts flow out. Your money data never leaves a server you own.
 
-Bank support today is Canadian (Tangerine, PC Financial, Canadian Tire, RBC, Wealthsimple). Adding a bank
-is one parser module: see [CONTRIBUTING.md](CONTRIBUTING.md).
+[![CI](https://github.com/samratvij/Xpensimate/actions/workflows/ci.yml/badge.svg)](https://github.com/samratvij/Xpensimate/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2a78d6)](LICENSE)
+![Self-hosted](https://img.shields.io/badge/self--hosted-yes-2e7d32)
+![Python 3.11](https://img.shields.io/badge/python-3.11-3776ab?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![Postgres 16](https://img.shields.io/badge/Postgres-16-4169e1?logo=postgresql&logoColor=white)
+![Android](https://img.shields.io/badge/Android-Jetpack%20Compose-3ddc84?logo=android&logoColor=white)
+![Claude](https://img.shields.io/badge/AI-Claude-d97757)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
-## Get started
+[Features](#-features) · [How it works](#-how-it-works) · [Quick start](#-quick-start) ·
+[Banks](#-supported-banks) · [Under the hood](#-under-the-hood) · [Roadmap](#%EF%B8%8F-roadmap) ·
+[Contributing](CONTRIBUTING.md)
 
-1. **Run the server**: [docs/hosting.md](docs/hosting.md) (home server with Tailscale, or a VPS).
-2. **Describe your household** in `backend/household.toml` (copied from `household.example.toml`): who
-   spending is for, and your cards.
-3. **Install the Android app** (build it from `android/`, below) or open the web app at `/app/`.
-4. Optional: [bank alert emails](docs/gmail-setup.md) and [push notifications](docs/firebase-setup.md).
+</div>
 
-How it works and why: [docs/architecture.md](docs/architecture.md).
+---
 
-## Android app (`android/`)
+## 🤔 Why Xpensimate?
 
-Open `android/` in Android Studio, or build from the command line (JDK 17):
+Most budgeting apps want your bank password, sell you a subscription, or leave you typing in every coffee.
+Xpensimate takes a different route:
 
-```bash
-cd android && ./gradlew assembleDebug   # app/build/outputs/apk/debug/app-debug.apk
+- **No bank logins.** It reads the purchase alerts your bank already sends you, and the notifications your
+  phone already shows.
+- **No data broker.** Everything lives in a Postgres database on your own machine or VPS.
+- **No manual entry.** Charges arrive on their own and get categorized; you only fix the odd one, and it
+  learns from that.
+- **Built for households.** Shared groceries, one person's haircut and money sent to parents are budgeted
+  differently, because they *are* different.
+
+## ✨ Features
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 📨 Automatic capture
+Bank alert emails through Gmail, Wealthsimple and Google Wallet purchase notifications on Android, and
+month-end statement imports that catch anything missed. A purchase reported by two feeds is stored once.
+
+</td>
+<td width="50%" valign="top">
+
+### 🏷️ What + who
+Every charge gets a **category** (Grocery, Eating Out, …) and a **purpose** (Shared, Alex, Sam, Parents…).
+Rules, history and Claude fill them in; your corrections are never overwritten.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🧾 Receipts, line by line
+Snap a photo and Claude reads every line. The receipt is matched to its card charge, so one Costco run
+can count as groceries, household supplies and one person's shopping at the same time.
+
+</td>
+<td valign="top">
+
+### 🎯 Budgets with alerts
+Monthly budgets per line, with a push notification at 80% and another when it's exceeded. Shared spending
+is budgeted by category, personal spending per person.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 📅 Bills you can see coming
+Recurring bills are detected from your history or added by hand, tracked as paid, upcoming or overdue,
+and folded into a projected month-end total.
+
+</td>
+<td valign="top">
+
+### 📱 Two apps, one server
+A native Android app and a web app that feels at home on an iPhone's home screen. Each person has their
+own token, so every edit shows who made it.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🔍 Month-end review
+Where the money went against each budget, how it compares with your usual month, top merchants, and
+trends over the last six months.
+
+</td>
+<td valign="top">
+
+### 🔒 Private by design
+Self-hosted, read-only Gmail access, outbound-only push, a home-server setup with nothing exposed to the
+internet, and a tiny footprint (it runs happily in 1 GB of RAM).
+
+</td>
+</tr>
+</table>
+
+## 🧭 How it works
+
+```mermaid
+flowchart LR
+    subgraph IN["Money in"]
+        A["📧 Bank alert emails"]
+        B["📲 Phone purchase notifications"]
+        C["📄 Statement CSV / PDF"]
+        D["🧾 Receipt photos"]
+    end
+
+    subgraph SERVER["Your Xpensimate server"]
+        E["Ingest and de-duplicate"]
+        F["Categorize: rules, history, Claude"]
+        G["Match receipts to charges"]
+        H[("Postgres")]
+        I["Budgets, bills and alerts"]
+    end
+
+    subgraph OUT["Insight out"]
+        J["🤖 Android app"]
+        K["🌐 Web app"]
+        L["🔔 Push alerts"]
+    end
+
+    A --> E
+    B --> E
+    C --> E
+    D --> G
+    E --> F --> H
+    G --> H
+    H --> I
+    I --> J
+    I --> K
+    I --> L
 ```
 
-On first launch, enter your server address and your API token. Purchase notification capture needs
-"notification access" for Xpensimate (Settings in the app links to it). Push alerts need
-`app/google-services.json` from your own Firebase project ([docs/firebase-setup.md](docs/firebase-setup.md));
-without it the app works, minus push.
+### What + who = the budget line
 
-## Backend (`backend/`)
+Two questions decide where a charge is budgeted. You define the people in `household.toml`; the apps pick
+them up from the server automatically.
 
-Its own Docker Compose project (`xpensimate`), isolated from anything else on the host: its own Postgres 16
-container, network (`xpensimate`) and volume (`xpensimate_pgdata`).
+| Charge | What (category) | Who (purpose) | Budget line |
+|---|---|---|---|
+| Weekly groceries | Grocery | Shared | **Grocery** |
+| Alex's haircut | Personal Care | Alex | **Alex Personal** |
+| Money sent to parents | Transfer | Parents | **Parents** |
+| Shoes bought for parents | Shopping | Parents | **Parents Shopping** |
 
-- API: every `/api/v1/*` call needs `Authorization: Bearer <token>`; `/health` is open. Interactive docs at
-  `/docs`.
-- Postgres: `127.0.0.1:5434` for local `psql` debugging.
-- Migrations, categories and your accounts (from `household.toml`) are set up on container start.
+## 🚀 Quick start
 
-### Categorization
+> **You'll need:** a machine with Docker (a spare PC at home or a small VPS), an Android phone or any
+> browser, and optionally an [Anthropic API key](https://console.anthropic.com/) for automatic
+> categorization and receipt reading.
 
-Two tiers (`app/core/taxonomy.py`): **category** is what the money was spent on (Grocery, Eating Out,
-Gas & Parking, …) and **purpose** is who it was for, as listed in `household.toml` (e.g. Shared, Alex, Sam,
-Parents). Together they give the **budget line** the household budgets against: shared spending by
-category, everyone else by their own line (e.g. "Alex Personal"). `GET /api/v1/summary` groups by budget
-line by default.
+**1. Get the code and configure it**
+
+```bash
+git clone https://github.com/samratvij/Xpensimate.git
+cd Xpensimate/backend
+cp .env.example .env                       # passwords and tokens: openssl rand -hex 32
+cp household.example.toml household.toml   # your people and your cards
+```
+
+**2. Start the server**, choosing where it lives:
+
+| | 🏠 Home server + Tailscale | ☁️ VPS |
+|---|---|---|
+| Reachable from | your own devices only | the internet (token-protected) |
+| HTTPS | `tailscale serve` | Caddy, automatic Let's Encrypt |
+| Start with | `docker compose up -d --build` | `docker compose -f docker-compose.yml -f compose.vps.yml up -d --build` |
+
+Step-by-step for both: **[docs/hosting.md](docs/hosting.md)**.
+
+**3. Connect an app**
+
+- **Android:** build the app from `android/` ([below](#-the-apps)), then enter your server address and token.
+- **iPhone / laptop:** open `https://<your-server>/app/` and add it to your home screen.
+
+**4. Optional extras**
+
+- 📧 [Bank alert emails via Gmail](docs/gmail-setup.md)
+- 🔔 [Push notifications for budget alerts](docs/firebase-setup.md)
+
+## 🏦 Supported banks
+
+Bank support is Canadian today. Adding yours is usually one small parser module plus a test:
+**[CONTRIBUTING.md](CONTRIBUTING.md)** shows how.
+
+| Bank | Alert emails | Phone notifications | Statement import |
+|---|:---:|:---:|:---:|
+| Tangerine | ✅ | | ✅ CSV |
+| PC Financial | ✅ | | ✅ CSV |
+| RBC Royal Bank | ✅ | | ✅ PDF |
+| Canadian Tire (Triangle) | 🧪 | | ✅ CSV |
+| Wealthsimple | | ✅ | ✅ CSV |
+| Google Wallet (any card) | | ✅ | |
+
+🧪 = written to the expected format, not yet confirmed against a real alert.
+
+## 📱 The apps
+
+<details>
+<summary><b>Android app</b>: build and install</summary>
+
+<br>
+
+Open `android/` in Android Studio, or build from the command line with JDK 17:
+
+```bash
+cd android && ./gradlew assembleDebug
+# app/build/outputs/apk/debug/app-debug.apk
+```
+
+On first launch, enter your server address and your API token.
+
+- **Purchase capture** needs "notification access" for Xpensimate (Settings in the app links to it).
+  Purchases seen while the server is unreachable are queued and sent later.
+- **Push alerts** need `app/google-services.json` from your own Firebase project
+  ([docs/firebase-setup.md](docs/firebase-setup.md)). Without it the app works, minus push.
+
+</details>
+
+<details>
+<summary><b>Web app</b>: iPhone, iPad and laptops</summary>
+
+<br>
+
+The server serves a full web app at `/app/`: dashboard, activity, transaction edits and splits, receipt
+uploads, bills, budgets, month review, alerts and categories. Plain HTML and JavaScript, no build step.
+On an iPhone, open it in Safari and use **Share → Add to Home Screen**. Browsers need HTTPS: on a home
+server, `tailscale serve` provides it ([docs/hosting.md](docs/hosting.md)).
+
+</details>
+
+## 🔧 Under the hood
+
+<details>
+<summary><b>🏷️ Categorization pipeline</b></summary>
+
+<br>
 
 Each incoming transaction gets a category and a purpose from, in order:
 
 1. **Rules** (`/api/v1/rules`): whole-word merchant patterns, optionally limited to an account, weekdays or
-   local hours. Priority: rules saved with `"remember": true` (10) > generic starter rules for Canadian
-   merchants (1).
-2. **History**: the last confident (or manually set) categorization of the same normalized merchant.
-3. **Claude** (`CATEGORIZER_MODEL`, default `claude-haiku-5-5`, low effort, structured output), given the
-   household's past choices and notes for that merchant: only when `ANTHROPIC_API_KEY` is set in `.env`. Failures leave the
-   transaction `Uncategorized`.
+   local hours. Rules saved with `"remember": true` beat the generic starter rules for Canadian merchants.
+2. **History**: the last confident (or manually set) categorization of the same merchant.
+3. **Claude** (`CATEGORIZER_MODEL`, default `claude-haiku-5-5`, structured output), given your household
+   description, purposes, and past choices and notes for that merchant. Only when `ANTHROPIC_API_KEY` is
+   set; otherwise the transaction stays `Uncategorized` until you set it.
 
 Manual changes are never overwritten. `POST /api/v1/transactions/recategorize` re-runs the pipeline on
 uncategorized rows (e.g. after adding a key or rules).
 
-### Gmail bank alerts
+</details>
 
-The optional `gmail-worker` service ingests Tangerine, PC Financial, Canadian Tire and RBC alert emails via Gmail
-watch + Pub/Sub streaming pull (outbound only). Setup: [docs/gmail-setup.md](docs/gmail-setup.md).
-Email-sourced transactions arrive as `PENDING_MATCH` for receipt reconciliation.
+<details>
+<summary><b>🧾 Receipts and matching</b></summary>
 
-### Receipts
+<br>
 
-`POST /api/v1/receipts/ocr` takes a receipt photo (multipart field `file`, JPEG/PNG/WebP up to 15 MB).
-The image is rotated per EXIF, capped at 2000 px and stored as JPEG under `backend/data/receipts/`; Claude
-reads it (`RECEIPT_MODEL`, default `claude-sonnet-5-5`) into merchant, date/time, tax, total and line items, each with a category and purpose.
-Receipts whose lines + tax don't add up to the total (±$0.05), or with no readable date, come back with
-`needs_review: true`. Needs `ANTHROPIC_API_KEY`; without it the endpoint returns 503.
+`POST /api/v1/receipts/ocr` takes a receipt photo (JPEG/PNG/WebP up to 15 MB). The image is rotated per
+EXIF, capped at 2000 px and stored under `backend/data/receipts/`; Claude (`RECEIPT_MODEL`, default
+`claude-sonnet-5-5`) reads it into merchant, date and time, tax, total and line items, each with a category
+and purpose. Receipts that don't add up (±$0.05) or have no readable date come back with
+`needs_review: true`.
 
-Receipts are matched to card transactions automatically, whichever arrives first: within 72 hours and
-$0.05, or, for restaurant receipts, a card amount up to 30% higher (tip) with a similar merchant name.
-Ties are left alone; the app resolves them with `GET /receipts/{id}/candidates` and
-`POST /receipts/{id}/match`. A match copies the lines into the transaction's items, spreading tax and
-tip so they sum to the card amount, and the summary then counts each line under its own budget line.
-`POST /receipts/{id}/unmatch` (or deleting the receipt) undoes it.
+Receipts are matched to card charges automatically, whichever arrives first: within 72 hours and $0.05, or
+for restaurants a card amount up to 30% higher (the tip) with a similar merchant name. Ties are left for you
+to pick. A match copies the lines onto the charge, spreading tax and tip, so each line counts under its own
+budget line.
 
-### Budget alerts
+</details>
 
-Budgets are set per budget line (`PUT /api/v1/budgets/{line}`). After any change in spending (new
-transaction, edit, receipt match, budget change) the affected lines are re-totalled for the current month:
-at the warning threshold (80% by default) a WARNING alert fires, over the limit an EXCEEDED alert, each at
-most once per line per month. Alerts are stored (`GET /api/v1/alerts`) and pushed to registered phones via
-Firebase Cloud Messaging: setup in [docs/firebase-setup.md](docs/firebase-setup.md).
+<details>
+<summary><b>🎯 Budgets and alerts</b></summary>
 
-### Expected expenses
+<br>
 
-Recurring bills and memberships (`/api/v1/recurring`) have a cadence (weekly, every two weeks, monthly),
-a usual amount and a category/who. `POST /recurring/detect` finds steady series in past
-transactions; items can also be added or edited by hand. A card charge whose merchant matches an
-item's pattern and whose amount is within its tolerance is linked as a payment (and takes the item's
-category and who); payments made outside the cards, like rent by e-transfer, are recorded with
-`POST /recurring/{id}/paid`. `GET /recurring/expected?month=` lists each due date as paid, upcoming or
-overdue, and the summary adds `expected` and `projected` (spent + expected) per budget line, with
-`projected_over_limit` against the budget.
+Budgets are set per budget line (`PUT /api/v1/budgets/{line}`). After any change in spending, the affected
+lines are re-totalled for the current month: at the warning threshold (80% by default) a WARNING alert
+fires, over the limit an EXCEEDED alert, each at most once per line per month. Alerts are stored
+(`GET /api/v1/alerts`) and pushed to registered phones through Firebase Cloud Messaging.
 
-### Statement import (month-end)
+</details>
 
-Upload a credit card statement CSV (Canadian Tire, PC Financial, Tangerine or Wealthsimple; the format is
-detected from its header) at `<server>/import` from a laptop, or from the app
-(Transactions → upload icon). The preview compares every row with what the app already has for that
-account (same amount, within 3 days): known charges are confirmed, missing ones added and categorized
-(rules, history and Claude, with the bank's own category as a hint), card payments recorded as not an expense along with the bank-side debit that paid them, and ties
-left for you to decide. It also lists app transactions the statement doesn't have. Nothing changes until
-you import; the import runs in the background, and importing the same file again adds nothing.
+<details>
+<summary><b>📅 Recurring bills</b></summary>
 
-### Backups
+<br>
 
-See [docs/hosting.md](docs/hosting.md#after-either-option).
+Bills and memberships (`/api/v1/recurring`) have a cadence (weekly, every two weeks, monthly), a usual amount
+and a category and purpose. `POST /recurring/detect` finds steady series in past transactions. A charge
+whose merchant and amount fit is linked as the payment; payments made outside your cards (rent by
+e-transfer) are recorded with `POST /recurring/{id}/paid`. The summary adds `expected` and `projected`
+(spent + expected) per budget line.
 
-## Development
+</details>
 
-Tests (against the separate `expense_test` database):
+<details>
+<summary><b>📄 Statement import</b></summary>
 
-```bash
-docker compose run --rm api pytest -q
+<br>
+
+Upload a statement at `<server>/import` or from the Android app. The format is detected from its header.
+The preview compares every row with what the app already has (same amount, within 3 days): known charges
+are confirmed, missing ones added and categorized, card payments recorded as not an expense, and ties left
+for you. It also lists app charges the statement doesn't have. Nothing changes until you import, and
+importing the same file twice adds nothing.
+
+</details>
+
+<details>
+<summary><b>🧱 Stack and project layout</b></summary>
+
+<br>
+
+| Part | Tech |
+|---|---|
+| API | Python 3.11, FastAPI, SQLAlchemy, Alembic |
+| Database | Postgres 16 |
+| AI | Claude (Haiku to categorize, Sonnet to read receipts) |
+| Android | Kotlin, Jetpack Compose, Retrofit, ML Kit document scanner, Firebase Cloud Messaging |
+| Web app | Plain HTML, CSS and JavaScript |
+| Deploy | Docker Compose; Tailscale or Caddy for HTTPS |
+
+```
+backend/
+  app/api/v1/        REST endpoints
+  app/daemons/       Gmail worker and bank alert parsers
+  app/services/      categorizer, receipts, reconciler, budgets, recurring bills
+  app/statements/    statement CSV/PDF parsers
+  app/web/           the web app and the statement import page
+  household.example.toml
+android/             the Android app
+docs/                hosting, Gmail, Firebase, architecture
 ```
 
-New migration after changing `app/db/models.py`:
+The API is documented interactively at `<server>/docs`. Every `/api/v1/*` call needs
+`Authorization: Bearer <token>`.
+
+</details>
+
+<details>
+<summary><b>🧪 Development</b></summary>
+
+<br>
 
 ```bash
-docker compose run --rm api alembic revision --autogenerate -m "describe change"
+cd backend
+docker compose run --rm api pytest -q        # tests, against a separate expense_test database
+docker compose run --rm api alembic revision --autogenerate -m "describe change"   # after model changes
 ```
+
+Tests use a fictional household (`backend/tests/household.toml`). CI runs the backend tests and the
+Android build on every push.
+
+</details>
+
+More on the design choices: **[docs/architecture.md](docs/architecture.md)**.
+
+## 🔒 Privacy and security
+
+- Your data lives in your own Postgres database. The only thing that leaves it is what Claude needs, and
+  only if you add an API key: merchant names, amounts and notes for categorizing, and receipt photos for
+  reading.
+- Gmail access is read-only, and only alert emails from known bank senders are parsed; statements, offers
+  and one-time codes are ignored and never stored.
+- On a home server the API listens only on your Tailscale network. On a VPS it sits behind Caddy with HTTPS.
+- Backups (`backend/scripts/backup.sh`) are a cron line away; see [docs/hosting.md](docs/hosting.md).
+
+## 🗺️ Roadmap
+
+- [x] Bank alerts, phone notifications, statement import
+- [x] Receipt reading and line-level matching
+- [x] Budgets, push alerts, recurring bills, month review
+- [x] Home-server and VPS hosting guides
+- [ ] Screenshots and a demo dataset
+- [ ] First-run setup wizard in the web app (no editing `household.toml` by hand)
+- [ ] Generic history import from any spreadsheet or CSV
+- [ ] Banks beyond Canada (contributions very welcome)
+- [ ] Optional encrypted off-site backups
+
+## 🤝 Contributing
+
+Bug reports, ideas and pull requests are welcome. The most valuable contribution is support for your bank:
+see **[CONTRIBUTING.md](CONTRIBUTING.md)**.
+
+## 📜 License
+
+[MIT](LICENSE). Use it, change it, share it.
