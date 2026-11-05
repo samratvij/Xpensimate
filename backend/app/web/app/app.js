@@ -747,6 +747,7 @@ async function moreScreen(ctx) {
       ${link("#/household", "🏠", "Household", "People, cards and accounts")}
       ${link("#/categories", "🏷️", "Categories", "Add, rename or merge")}
       ${link("/import", "📄", "Import a statement", "CSV or RBC PDF (easier on a computer)")}
+      ${link("#/history", "🗂️", "Import past spending", "From a spreadsheet or another app")}
     </div>
     ${standalone ? "" : `<div class="card small"><b>Tip:</b> in Safari, tap the Share button, then <b>Add to Home Screen</b>, to open Xpensimate like an app.</div>`}
     <div class="card"><div class="small muted">Signed in as</div><div style="font-weight:600">${esc(state.me?.user ?? "…")}</div>
@@ -1171,6 +1172,130 @@ async function householdScreen(ctx) {
 }
 
 
+// ---------- import past spending (a CSV from a spreadsheet or another app) ----------
+const fmtLabel = f => f.replace("%Y", "YYYY").replace("%y", "YY").replace("%m", "MM").replace("%d", "DD").replace("%B", "Month").replace("%b", "Mon");
+
+async function historyScreen(ctx) {
+  const status = await api("/history");
+  if (!ctx.alive()) return;
+  let file = null, p = null, m = null, error = "", busy = false;
+
+  const field = (key, label, required) => `<label class="field">${label}${required ? "" : " (optional)"}
+    <select data-col="${key}">${required ? "" : `<option value="">—</option>`}${p.headers.map(h =>
+      `<option ${m[key] === h ? "selected" : ""}>${esc(h)}</option>`).join("")}</select></label>`;
+
+  const valueMap = (column, map, choices, blank) => {
+    const values = p.values[column];
+    if (!values) return `<div class="small muted">This column has too many different values to match one by one; ${blank.toLowerCase()} for all.</div>`;
+    return values.map(v => `<div class="row" style="margin-top:6px"><div class="grow small">${esc(v)}</div>
+      <select class="input" style="max-width:55%" data-map="${map}" data-value="${esc(v)}">
+        <option value="">${blank}</option>${choices.map(c => `<option ${m[map][v] === c ? "selected" : ""}>${esc(c)}</option>`).join("")}
+      </select></div>`).join("");
+  };
+
+  const mappingHtml = () => {
+    const formats = p.date_formats[m.date] || [];
+    if (!formats.includes(m.date_format)) m.date_format = formats[0] || "";
+    return `<div class="card stack">
+        <h3>${esc(file.name)}</h3><div class="small muted">${plural(p.row_count, "row")}. Check which column is which.</div>
+        ${field("date", "Date", true)}
+        ${formats.length ? (formats.length > 1 ? `<label class="field">Dates are written as<select data-fmt>${formats.map(f =>
+            `<option value="${esc(f)}" ${f === m.date_format ? "selected" : ""}>${fmtLabel(f)}</option>`).join("")}</select></label>`
+            : `<div class="small muted">Dates read as ${fmtLabel(formats[0])}.</div>`)
+          : `<div class="small err">Can't read the dates in this column.</div>`}
+        ${field("merchant", "Where (merchant or description)", true)}
+        ${field("amount", "Amount", true)}
+        <div class="seg"><button data-sign="positive" class="${m.spending_is === "positive" ? "on" : ""}">Spending is positive</button>
+          <button data-sign="negative" class="${m.spending_is === "negative" ? "on" : ""}">Spending is negative</button></div>
+        ${field("category", "Category", false)}
+        ${field("who", "Who it was for", false)}
+        ${field("note", "Notes", false)}
+      </div>
+      ${m.category ? `<div class="card"><h3>Your categories</h3><div class="small muted">Match each to one of Xpensimate's.</div>
+        ${valueMap(m.category, "categories", p.categories, "Leave uncategorized")}</div>` : ""}
+      ${m.who ? `<div class="card"><h3>Who it was for</h3><div class="small muted">Anything not matched counts as Shared.</div>
+        ${valueMap(m.who, "who_values", p.purposes, "Shared")}</div>` : ""}
+      <div class="card stack">
+        <label class="row"><input type="checkbox" data-add ${m.add_as_spending ? "checked" : ""}>
+          <span class="grow">Also add it as spending${p.first_live_charge ? ` before ${fmtDate(`${p.first_live_charge}T12:00:00`)}` : ""}</span></label>
+        <div class="small muted">${p.first_live_charge
+          ? `So trends and reviews go back further. Rows from ${fmtDate(`${p.first_live_charge}T12:00:00`)} on only teach categorization, since Xpensimate already has that spending.`
+          : "So trends and reviews go back further."} Either way, every row teaches Xpensimate how you file each merchant.
+          Importing again replaces this import.</div>
+      </div>
+      <p class="err" data-error>${esc(error)}</p>
+      <button class="btn" data-import ${busy || !m.date_format ? "disabled" : ""}>${busy ? "Importing…" : `Import ${plural(p.row_count, "row")}`}</button>`;
+  };
+
+  const draw = () => {
+    ctx.view.innerHTML = `<div class="stack">
+      ${p ? mappingHtml() : `<div class="card stack">
+        <h3>Bring in your past spending</h3>
+        <div class="small muted">A CSV from a budgeting spreadsheet or another app: one row per purchase, with a date,
+          where, and how much, and ideally your category and who it was for. Xpensimate learns how you file each
+          merchant, and can add the older spending to your history.</div>
+        <label class="btn secondary" style="cursor:pointer">Choose a CSV file<input type="file" accept=".csv,.tsv,.txt,text/csv" data-file hidden></label>
+        <div class="small muted">From Excel or Google Sheets: File → Download → CSV.</div>
+        <p class="err" data-error>${esc(error)}</p></div>
+        ${status.examples ? `<div class="card stack"><h3>Your last import</h3>
+          <div class="small">${plural(status.examples, "row")} learned from, ${plural(status.rules, "merchant rule")},
+            ${plural(status.added_as_spending, "purchase")} added as spending.</div>
+          <button class="btn danger" data-clear>Remove imported history</button></div>` : ""}`}
+    </div>`;
+    bind();
+  };
+
+  const bind = () => {
+    const v = ctx.view;
+    $("[data-file]", v)?.addEventListener("change", async e => {
+      file = e.target.files[0];
+      if (!file) return;
+      const form = new FormData();
+      form.append("file", file);
+      try {
+        p = await api("/history/preview", { method: "POST", form });
+        const s = p.suggested;
+        m = { date: s.date, merchant: s.merchant, amount: s.amount, category: s.category, who: s.who, note: s.note,
+          date_format: s.date_format || "", spending_is: s.spending_is, add_as_spending: true,
+          categories: { ...p.category_guesses }, who_values: { ...p.who_guesses } };
+        error = "";
+      } catch (err) { error = err.message; file = null; }
+      draw();
+    });
+    $$("[data-col]", v).forEach(s => s.onchange = () => { m[s.dataset.col] = s.value || null; draw(); });
+    $("[data-fmt]", v)?.addEventListener("change", e => { m.date_format = e.target.value; });
+    $$("[data-sign]", v).forEach(b => b.onclick = () => { m.spending_is = b.dataset.sign; draw(); });
+    $$("[data-map]", v).forEach(s => s.onchange = () => { m[s.dataset.map][s.dataset.value] = s.value || null; });
+    $("[data-add]", v)?.addEventListener("change", e => { m.add_as_spending = e.target.checked; });
+    $("[data-clear]", v)?.addEventListener("click", async () => {
+      if (!await confirmSheet("Remove imported history?", "Xpensimate forgets what it learned from the import, and the spending it added is taken out.", "Remove")) return;
+      await api("/history", { method: "DELETE" });
+      toast("Imported history removed");
+      route();
+    });
+    $("[data-import]", v)?.addEventListener("click", async () => {
+      if (!m.date || !m.merchant || !m.amount) { error = "Pick the date, where and amount columns."; return draw(); }
+      busy = true; error = ""; draw();
+      const form = new FormData();
+      form.append("file", file);
+      form.append("mapping", JSON.stringify(m));
+      try {
+        const r = await api("/history/import", { method: "POST", form });
+        const skipped = Object.entries(r.skipped).map(([why, n]) => `${n} ${why}`).join(", ");
+        state.taxonomy = null;
+        busy = false; p = null; file = null;
+        ctx.view.innerHTML = `<div class="stack"><div class="card stack"><h3>Imported</h3>
+          <div>${plural(r.rows, "row")} learned from, ${plural(r.rules, "merchant rule")} made, ${plural(r.added_as_spending, "purchase")} added as spending.</div>
+          ${skipped ? `<div class="small muted">Skipped: ${esc(skipped)}.</div>` : ""}
+          <a class="btn" href="#/">Done</a></div></div>`;
+      } catch (err) { busy = false; error = err.message; draw(); }
+    });
+  };
+
+  draw();
+}
+
+
 const ROUTES = [
   { re: /^\/$/, screen: homeScreen, title: "Xpensimate", tab: "home" },
   { re: /^\/transactions$/, screen: transactionsScreen, title: "Spending", tab: "transactions" },
@@ -1185,6 +1310,7 @@ const ROUTES = [
   { re: /^\/alerts$/, screen: alertsScreen, title: "Budget alerts", parent: "more" },
   { re: /^\/categories$/, screen: categoriesScreen, title: "Categories", parent: "more" },
   { re: /^\/household$/, screen: householdScreen, title: "Household", parent: "more" },
+  { re: /^\/history$/, screen: historyScreen, title: "Import past spending", parent: "more" },
 ];
 
 let renderSeq = 0;

@@ -227,7 +227,9 @@ def _history_points(db: Session) -> dict[str, list[tuple[date, Decimal, str | No
     for e in db.scalars(select(CategorizationExample).where(CategorizationExample.trip.is_(False))):
         if e.spent_on and e.amount is not None and e.amount < 0:
             points[e.merchant_key].append((e.spent_on, -e.amount, e.category, e.purpose))
-    for t in db.scalars(select(Transaction).where(Transaction.amount > 0, Transaction.excluded.is_(False))):
+    # Spending added by a history import is already here as its examples.
+    for t in db.scalars(select(Transaction).where(Transaction.amount > 0, Transaction.excluded.is_(False),
+                                              Transaction.source != "history")):
         points[merchant_key(t.merchant_raw)].append(
             (t.timestamp.astimezone(tz).date(), t.amount, t.category, t.purpose)
         )

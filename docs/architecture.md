@@ -52,6 +52,9 @@ month: a warning at the threshold, then exceeded over the limit.
   missing from the statement.
 - **Receipts**: a photo is read by Claude into line items, each with its own category and purpose, and
   matched to the card charge; the summary then counts each line under its own budget line.
+- **Past spending** (a CSV from a spreadsheet or another app): every row becomes a categorization example
+  and feeds history rules; rows older than the first live charge can be added as spending (source
+  `history`), later ones only teach, so nothing is counted twice.
 - **Expected expenses**: recurring bills detected from history or added by hand; the summary shows
   spent + still expected = projected.
 

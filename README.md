@@ -212,7 +212,10 @@ cp household.example.toml household.toml && docker compose restart api
 docker compose exec api python -m app.scripts.seed_demo
 ```
 
-**5. Optional extras**
+**5. Bring your history** (optional): More → Import past spending takes a CSV from a spreadsheet or another
+app, learns how you categorize, and can add your older spending.
+
+**6. Optional extras**
 
 - 📧 [Bank alert emails via Gmail](docs/gmail-setup.md)
 - 🔔 [Push notifications for budget alerts](docs/firebase-setup.md)
@@ -333,6 +336,21 @@ e-transfer) are recorded with `POST /recurring/{id}/paid`. The summary adds `exp
 </details>
 
 <details>
+<summary><b>🗂️ Importing past spending</b></summary>
+
+<br>
+
+More → Import past spending takes a CSV from a budgeting spreadsheet or another app. Xpensimate guesses
+which column is the date, merchant, amount, category, who and note (and the date format and sign), and how
+your category and "who" names map onto its own; you check and adjust. Then every row teaches it: Claude sees
+how you filed each merchant, merchants you always filed the same way become rules, and a charge that turns
+out to be one of the imported purchases takes its category. Rows dated before the first charge Xpensimate
+already has can also be added as spending, so trends and reviews go back further; later rows only teach,
+so nothing is counted twice. Importing again replaces the previous import, and it can be removed entirely.
+
+</details>
+
+<details>
 <summary><b>📄 Statement import</b></summary>
 
 <br>
@@ -412,7 +430,7 @@ More on the design choices: **[docs/architecture.md](docs/architecture.md)**.
 - [x] Home-server and VPS hosting guides
 - [x] Screenshots and a demo dataset
 - [x] First-run setup wizard in the web app (no editing `household.toml` by hand)
-- [ ] Generic history import from any spreadsheet or CSV
+- [x] History import from any spreadsheet or CSV
 - [ ] Banks beyond Canada (contributions very welcome)
 - [ ] Optional encrypted off-site backups
 

@@ -10,6 +10,7 @@ from app.api.v1 import (
     categories,
     devices,
     health,
+    history,
     household,
     insights,
     meta,
@@ -28,7 +29,7 @@ app = FastAPI(title="Xpensimate", version="0.1.0")
 api_v1 = APIRouter(prefix="/api/v1", dependencies=[Depends(require_token)])
 for module in (
     transactions, notifications, receipts, recurring, statements, budgets, categories, summary, insights, alerts, devices,
-    rules, meta, health, household
+    rules, meta, health, household, history
 ):
     api_v1.include_router(module.router)
 app.include_router(api_v1)
