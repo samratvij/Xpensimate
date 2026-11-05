@@ -1,4 +1,5 @@
 from datetime import date
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import func, select
@@ -7,6 +8,7 @@ from app.db.models import BudgetEnvelope, Receipt, RecurringExpense, Transaction
 from app.scripts.seed_demo import DemoRefused, seed_demo
 
 TODAY = date(2026, 11, 20)
+TZ = ZoneInfo("America/Toronto")
 
 
 def count(db, model, *where):
@@ -20,11 +22,11 @@ def test_demo_fills_six_months_for_the_household(db):
     assert count(db, Receipt, Receipt.matched_transaction_id.is_not(None)) == 2
     assert count(db, BudgetEnvelope) >= 12
     first = db.scalar(select(func.min(Transaction.timestamp)))
-    assert first.date() >= date(2026, 6, 1)
+    assert first.astimezone(TZ).date() >= date(2026, 6, 1)
     # Every purpose the household has shows up, and nothing is dated after today.
     purposes = set(db.scalars(select(Transaction.purpose).distinct()))
     assert {"Shared", "Alex", "Sam", "Parents"} <= purposes
-    assert db.scalar(select(func.max(Transaction.timestamp))).date() <= TODAY
+    assert db.scalar(select(func.max(Transaction.timestamp))).astimezone(TZ).date() <= TODAY
 
 
 def test_demo_data_reads_through_the_api(client, db):

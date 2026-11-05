@@ -4,8 +4,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.db.models import CategorizationExample, RecurringExpense
-from app.services.recurring import detect, due_dates, occurrences, save_detected
+from app.db.models import CategorizationExample, RecurringExpense, Transaction
+from app.services.recurring import detect, due_dates, occurrences, paid_due_dates, save_detected
 
 TZ = ZoneInfo("America/Toronto")
 TODAY = datetime.now(TZ).date()
@@ -136,6 +136,49 @@ def test_overdue_and_upcoming(db):
     occ = occurrences(db, date(2026, 11, 1), date(2026, 12, 1), today=date(2026, 11, 18))
     assert [(o.due, o.status) for o in occ] == [(date(2026, 11, 2), "overdue"), (date(2026, 11, 16), "upcoming"),
                                                 (date(2026, 11, 30), "upcoming")]
+
+
+def pay(db, recurring, on, amount="2150.00"):
+    db.add(Transaction(source="manual", source_ref=f"pay:{on}", timestamp=datetime.combine(on, datetime.min.time(), TZ)
+                       + timedelta(hours=12), amount=Decimal(amount), merchant_raw=recurring.name,
+                       category=recurring.category, recurring_id=recurring.id))
+    db.commit()
+
+
+def statuses(db, month_start, today):
+    month_end = (month_start + timedelta(days=32)).replace(day=1)
+    return [(o.due, o.status) for o in occurrences(db, month_start, month_end, today=today)]
+
+
+def test_rent_paid_early_pays_next_months_due_date(db):
+    rent = item(anchor=date(2026, 9, 1), name="Rent", category="Rent + Parking", amount=Decimal("2150"))
+    db.add(rent)
+    db.commit()
+    pay(db, rent, date(2026, 10, 1))
+    pay(db, rent, date(2026, 10, 30))  # November's rent, two days early
+    assert statuses(db, date(2026, 10, 1), date(2026, 11, 5)) == [(date(2026, 10, 1), "paid")]
+    assert statuses(db, date(2026, 11, 1), date(2026, 11, 5)) == [(date(2026, 11, 1), "paid")]
+    assert statuses(db, date(2026, 12, 1), date(2026, 11, 5)) == [(date(2026, 12, 1), "upcoming")]
+
+
+def test_late_payment_pays_its_own_month_not_the_next(db):
+    phone = item(anchor=date(2026, 9, 28), name="Phone", amount=Decimal("80"))
+    db.add(phone)
+    db.commit()
+    pay(db, phone, date(2026, 11, 2), "80")  # October 28's bill, paid five days late
+    assert statuses(db, date(2026, 10, 1), date(2026, 11, 20)) == [(date(2026, 10, 28), "paid")]
+    assert statuses(db, date(2026, 11, 1), date(2026, 11, 20)) == [(date(2026, 11, 28), "upcoming")]
+
+
+def test_each_payment_pays_one_due_date_and_far_off_ones_pay_none():
+    monthly = item(anchor=date(2026, 1, 15))
+    # Two payments a day apart: the second goes to the next nearest due date only if it's within reach.
+    assert paid_due_dates(monthly, [date(2026, 10, 15), date(2026, 10, 16)], date(2026, 10, 1), date(2026, 12, 1)) == {
+        date(2026, 10, 15)}
+    weekly = item("weekly", date(2026, 11, 2))
+    assert paid_due_dates(weekly, [date(2026, 11, 2), date(2026, 11, 8), date(2026, 11, 16)],
+                          date(2026, 11, 1), date(2026, 11, 30)) == {date(2026, 11, 2), date(2026, 11, 9),
+                                                                      date(2026, 11, 16)}
 
 
 def test_past_months_expect_nothing_and_inactive_items_are_ignored(client):

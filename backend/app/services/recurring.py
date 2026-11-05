@@ -2,8 +2,8 @@
 
 A recurring expense has a cadence and an anchor date; its due dates repeat from the anchor (monthly keeps
 the anchor's day of month, clamped to short months). A charge whose merchant matches the pattern and whose
-amount is within tolerance is linked to it as a payment. For a month, each due date is paid in order by
-that month's linked charges; the rest is "expected".
+amount is within tolerance is linked to it as a payment. Each payment pays the unpaid due date nearest to
+it, even across a month edge (rent paid on Oct 30 pays Nov 1); unpaid due dates are "expected".
 """
 import calendar
 import statistics
@@ -34,6 +34,8 @@ MAX_AMOUNT_SPREAD = Decimal("0.25")
 STALE_PERIODS = Decimal("2.5")
 # A due date this many days in the past without a payment is overdue rather than upcoming.
 OVERDUE_GRACE_DAYS = 3
+# A payment pays a due date at most this share of a period away from it (early or late).
+MAX_PAYMENT_OFFSET = 0.6
 # Hand-typed names (from imported history) that are recurring but say nothing about the merchant on a card statement.
 NO_PATTERN_KEYS = {"rent", "hydro", "parking", "internet and phone", "car insurance", "physio", "pilates", "rent + parking"}
 
@@ -134,27 +136,52 @@ class Occurrence:
         return budget_line(self.item.category, self.item.purpose)
 
 
+def paid_due_dates(item: RecurringExpense, payments: list[date], start: date, end: date) -> set[date]:
+    """The due dates in [start, end) that `payments` (local dates of the item's linked charges) paid.
+
+    Each payment, in date order, pays the unpaid due date nearest to it (the earlier one on a tie), if that
+    due date is within MAX_PAYMENT_OFFSET of a period. Due dates are considered for a period beyond both
+    ends, so a payment made early or late lands on the right side of a month edge.
+    """
+    period = CADENCES[item.cadence][0]
+    reach = timedelta(days=period * MAX_PAYMENT_OFFSET)
+    margin = timedelta(days=period * 2)
+    open_dues = due_dates(item, start - margin, end + margin)
+    paid: set[date] = set()
+    for day in sorted(payments):
+        candidates = [d for d in open_dues if abs(day - d) <= reach]
+        if not candidates:
+            continue
+        due = min(candidates, key=lambda d: (abs((day - d).days), d))
+        open_dues.remove(due)
+        paid.add(due)
+    return {d for d in paid if start <= d < end}
+
+
 def occurrences(db: Session, start: date, end: date, today: date) -> list[Occurrence]:
     """Every due date of every active recurring expense in [start, end), with whether it's been paid."""
     tz = ZoneInfo(get_settings().timezone)
+    # Payments a period either side of the window can still pay a due date inside it.
+    longest = timedelta(days=max(c[0] for c in CADENCES.values()))
     window = (
-        datetime.combine(start, datetime.min.time(), tzinfo=tz),
-        datetime.combine(end, datetime.min.time(), tzinfo=tz),
+        datetime.combine(start - longest, datetime.min.time(), tzinfo=tz),
+        datetime.combine(end + longest, datetime.min.time(), tzinfo=tz),
     )
-    paid_counts = Counter(
-        db.scalars(
-            select(Transaction.recurring_id).where(
-                Transaction.recurring_id.is_not(None),
-                Transaction.excluded.is_(False),
-                Transaction.timestamp.between(*window),
-            )
+    payments: dict = defaultdict(list)
+    for recurring_id, timestamp in db.execute(
+        select(Transaction.recurring_id, Transaction.timestamp).where(
+            Transaction.recurring_id.is_not(None),
+            Transaction.excluded.is_(False),
+            Transaction.timestamp >= window[0],
+            Transaction.timestamp < window[1],
         )
-    )
+    ):
+        payments[recurring_id].append(timestamp.astimezone(tz).date())
     result = []
     for item in db.scalars(select(RecurringExpense).where(RecurringExpense.active.is_(True))):
-        paid = paid_counts.get(item.id, 0)
-        for i, due in enumerate(due_dates(item, start, end)):
-            if i < paid:
+        paid = paid_due_dates(item, payments.get(item.id, []), start, end)
+        for due in due_dates(item, start, end):
+            if due in paid:
                 status = "paid"
             elif due < today - timedelta(days=OVERDUE_GRACE_DAYS):
                 status = "overdue"
