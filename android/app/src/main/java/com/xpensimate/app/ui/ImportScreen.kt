@@ -192,7 +192,7 @@ private fun LazyListScope.previewItems(p: StatementImport, vm: ImportViewModel) 
                 item { SectionTitle("Needs your decision (${unclear.size})") }
                 items(unclear, key = { "u${it.index}" }) { row -> UnclearRow(row, vm.decisions[row.index.toString()]) { vm.decisions[row.index.toString()] = it } }
             }
-            section("add", p, "Categorized with your rules, your history, then Claude.")
+            section("add", p, "Categorized with your rules, your history, then the AI model.")
             section("payment", p, null)
             if (p.missing.isNotEmpty()) {
                 item { SectionTitle("In the app but not on this statement (${p.missing.size})") }

@@ -49,8 +49,9 @@ def upload_receipt(
     file: UploadFile = File(...), db: Session = Depends(get_db), user: str = Depends(require_token)
 ) -> Receipt:
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Receipt OCR needs ANTHROPIC_API_KEY on the server")
+    if not settings.ai_enabled():
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "Receipt reading needs ANTHROPIC_API_KEY, or LLM_PROVIDER=openai and a model server")
 
     data = file.file.read(MAX_UPLOAD_BYTES + 1)
     if len(data) > MAX_UPLOAD_BYTES:

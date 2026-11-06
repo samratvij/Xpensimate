@@ -1,6 +1,15 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# Provider -> (categorizer, receipt reader). A local receipt reader must understand images; one vision model
+# can do both jobs, so a home server only has to hold one.
+DEFAULT_MODELS = {
+    "anthropic": ("claude-haiku-5-5", "claude-sonnet-5-5"),
+    "openai": ("qwen2.5vl:7b", "qwen2.5vl:7b"),
+}
 
 
 class Settings(BaseSettings):
@@ -13,10 +22,29 @@ class Settings(BaseSettings):
     # More people, each with their own token: "Sam:<token>,Someone:<token>".
     user_tokens: str = ""
     timezone: str = "America/Toronto"
+    # Who answers the AI questions (sorting a new merchant, reading a receipt photo): "anthropic" for Claude,
+    # or "openai" for any server with an OpenAI-compatible API, such as Ollama, llama.cpp, vLLM or LM Studio,
+    # so a model can run on your own server.
+    llm_provider: Literal["anthropic", "openai"] = "anthropic"
     anthropic_api_key: str = ""
+    llm_base_url: str = "http://ollama:11434/v1"
+    llm_api_key: str = ""
+    # Seconds to wait for one answer from an OpenAI-compatible server (a model on a CPU can be slow).
+    llm_timeout: float = 180
     # Categorizing is a short classification, so a small model does it; reading receipt photos needs more.
-    categorizer_model: str = "claude-haiku-5-5"
-    receipt_model: str = "claude-sonnet-5-5"
+    # Empty means the provider's default (DEFAULT_MODELS).
+    categorizer_model: str = ""
+    receipt_model: str = ""
+
+    def ai_enabled(self) -> bool:
+        """Claude needs a key; an OpenAI-compatible server only an address."""
+        return bool(self.anthropic_api_key if self.llm_provider == "anthropic" else self.llm_base_url)
+
+    def categorizer(self) -> str:
+        return self.categorizer_model or DEFAULT_MODELS[self.llm_provider][0]
+
+    def receipt_reader(self) -> str:
+        return self.receipt_model or DEFAULT_MODELS[self.llm_provider][1]
 
     receipts_dir: str = "/app/data/receipts"
     # Firebase service account (docs/firebase-setup.md); push is off when the file is missing.

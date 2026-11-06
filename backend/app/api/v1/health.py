@@ -117,16 +117,17 @@ def phone_capture_check(db: Session, now: datetime) -> HealthCheck:
     return HealthCheck(name=name, status="ok", detail=f"{purchase} Last heard from a phone {ago(heard, now)}.")
 
 
-def claude_check() -> HealthCheck:
+def ai_check() -> HealthCheck:
     settings = get_settings()
-    if not settings.anthropic_api_key:
+    if not settings.ai_enabled():
         return HealthCheck(
-            name="Claude", status="warning",
-            detail="No API key on the server: categorizing uses rules only and receipt photos can't be read.",
+            name="AI model", status="warning",
+            detail="No Claude API key or model server: categorizing uses rules only and receipt photos can't be read.",
         )
+    where = "Claude" if settings.llm_provider == "anthropic" else f"Model server {settings.llm_base_url}"
     return HealthCheck(
-        name="Claude", status="ok",
-        detail=f"Key set. Categorizing with {settings.categorizer_model}, receipts with {settings.receipt_model}.",
+        name="AI model", status="ok",
+        detail=f"{where}. Categorizing with {settings.categorizer()}, receipts with {settings.receipt_reader()}.",
     )
 
 
@@ -145,7 +146,7 @@ def health(db: Session = Depends(get_db)) -> HealthOut:
     now = datetime.now(timezone.utc)
     database = database_check(db)
     if database.status != "ok":
-        return HealthOut(checked_at=now, checks=[database, claude_check()])
+        return HealthOut(checked_at=now, checks=[database, ai_check()])
     return HealthOut(
         checked_at=now,
         checks=[
@@ -153,7 +154,7 @@ def health(db: Session = Depends(get_db)) -> HealthOut:
             gmail_check(db, now),
             parsing_check(db, now),
             phone_capture_check(db, now),
-            claude_check(),
+            ai_check(),
             push_check(db),
         ],
     )

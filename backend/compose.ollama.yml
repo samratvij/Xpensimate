@@ -1,0 +1,48 @@
+# A local model instead of Claude: runs Ollama next to Xpensimate, so categorizing and receipt photos never
+# leave your server. Pulls the models on first start (about 6 GB for the default qwen2.5vl:7b), then:
+#   docker compose -f docker-compose.yml -f compose.ollama.yml up -d
+# Add -f compose.vps.yml as well on a VPS. A 7B model wants ~8 GB of free RAM; on a CPU, expect a few
+# seconds per new merchant and up to a minute or two per receipt. See docs/local-models.md.
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: xpensimate-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama
+    networks: [xpensimate]
+    # NVIDIA GPU (needs the NVIDIA Container Toolkit): uncomment.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+
+  # One-shot: downloads the models the api will ask for, then exits.
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: xpensimate-ollama-pull
+    restart: "no"
+    entrypoint: ["sh", "-c", "until ollama list >/dev/null 2>&1; do sleep 1; done; ollama pull \"$$CATEGORIZER\" && ollama pull \"$$RECEIPTS\""]
+    environment:
+      OLLAMA_HOST: ollama:11434
+      CATEGORIZER: ${CATEGORIZER_MODEL:-qwen2.5vl:7b}
+      RECEIPTS: ${RECEIPT_MODEL:-qwen2.5vl:7b}
+    depends_on: [ollama]
+    networks: [xpensimate]
+
+  api:
+    environment:
+      LLM_PROVIDER: openai
+      LLM_BASE_URL: http://ollama:11434/v1
+    depends_on:
+      ollama:
+        condition: service_started
+
+  gmail-worker:
+    environment:
+      LLM_PROVIDER: openai
+      LLM_BASE_URL: http://ollama:11434/v1
+
+volumes:
+  ollama:
+    name: xpensimate_ollama

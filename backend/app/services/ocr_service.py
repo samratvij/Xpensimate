@@ -1,11 +1,9 @@
-import base64
 import io
 import logging
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-import anthropic
 from PIL import Image, ImageOps, UnidentifiedImageError
 from typing import Literal
 
@@ -13,7 +11,7 @@ from pydantic import BaseModel, create_model
 
 from app.core.config import get_settings
 from app.core.taxonomy import purposes
-from app.services.llm import claude_client, household_guide, refusal_fallback
+from app.services.llm import LlmError, ask, household_guide
 
 log = logging.getLogger(__name__)
 
@@ -92,41 +90,15 @@ def normalize_image(data: bytes) -> bytes:
 
 
 def extract_receipt(jpeg: bytes, categories: list[str]) -> OcrReceipt:
-    model = get_settings().receipt_model
     try:
-        response = claude_client().messages.parse(
-            model=model,
-            max_tokens=16000,
-            system=system_prompt(categories),
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/jpeg",
-                                "data": base64.standard_b64encode(jpeg).decode("ascii"),
-                            },
-                        },
-                        {"type": "text", "text": "Extract this receipt."},
-                    ],
-                }
-            ],
-            output_format=output_model(categories),
-            output_config={"effort": "medium"},
-            **refusal_fallback(model),
+        answer = ask(
+            model=get_settings().receipt_reader(), system=system_prompt(categories), text="Extract this receipt.",
+            image_jpeg=jpeg, schema=output_model(categories), max_tokens=16000, effort="medium",
         )
-    except anthropic.APIStatusError as e:
-        log.warning("Receipt OCR failed (%s): %s", e.status_code, e.message)
-        raise OcrError(f"Claude API error {e.status_code}") from e
-    except anthropic.APIConnectionError as e:
-        raise OcrError("Could not reach the Claude API") from e
-
-    if response.stop_reason == "refusal" or response.parsed_output is None:
-        raise OcrError(f"No receipt data returned (stop_reason={response.stop_reason})")
-    return OcrReceipt.model_validate(response.parsed_output.model_dump())
+    except LlmError as e:
+        log.warning("Receipt OCR failed: %s", e)
+        raise OcrError(str(e)) from e
+    return OcrReceipt.model_validate(answer.model_dump())
 
 
 def money(value: float) -> Decimal:

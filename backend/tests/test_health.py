@@ -32,7 +32,7 @@ def test_fresh_server(client, monkeypatch):
     result = checks(client)
     assert result["Database"]["status"] == "ok"
     assert result["Gmail bank alerts"]["status"] == "off"
-    assert result["Claude"]["status"] == "warning"  # tests run without a key
+    assert result["AI model"]["status"] == "warning"  # tests run without a key or model server
     assert result["Push notifications"]["status"] in ("off", "warning")
 
 

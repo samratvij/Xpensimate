@@ -16,7 +16,7 @@ and *who* it was for. Budgets, bills and alerts flow out. Your money data never 
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Postgres 16](https://img.shields.io/badge/Postgres-16-4169e1?logo=postgresql&logoColor=white)
 ![Android](https://img.shields.io/badge/Android-Jetpack%20Compose-3ddc84?logo=android&logoColor=white)
-![Claude](https://img.shields.io/badge/AI-Claude-d97757)
+![Claude or a local model](https://img.shields.io/badge/AI-Claude%20or%20local%20(Ollama)-d97757)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
 [Screenshots](#-screenshots) · [Features](#-features) · [How it works](#-how-it-works) · [Quick start](#-quick-start) ·
@@ -117,7 +117,8 @@ trends over the last six months.
 
 ### 🔒 Private by design
 Self-hosted, read-only Gmail access, outbound-only push, a home-server setup with nothing exposed to the
-internet, and a tiny footprint (it runs happily in 1 GB of RAM).
+internet, and a tiny footprint (it runs happily in 1 GB of RAM). Use Claude, or run an open model on your
+own server so nothing leaves it.
 
 </td>
 </tr>
@@ -175,8 +176,9 @@ More → Household); the apps pick them up from the server right away.
 ## 🚀 Quick start
 
 > **You'll need:** a machine with Docker (a spare PC at home or a small VPS), an Android phone or any
-> browser, and optionally an [Anthropic API key](https://console.anthropic.com/) for automatic
-> categorization and receipt reading.
+> browser, and optionally an AI model for automatic categorization and receipt reading: an
+> [Anthropic API key](https://console.anthropic.com/), or an open model on your own server
+> ([docs/local-models.md](docs/local-models.md)).
 
 **1. Get the code and set your secrets**
 
@@ -197,7 +199,8 @@ cp .env.example .env                       # passwords and tokens: openssl rand 
 Step-by-step for both: **[docs/hosting.md](docs/hosting.md)**.
 
 **3. Set up your household**: open `https://<your-server>/app/` and sign in with your token. A short wizard
-asks who spending is for and which cards you use; change it any time under More → Household.
+asks who spending is for, which categories you want, and which cards you use; change it any time under
+More → Household.
 
 **4. Connect your phone**
 
@@ -217,6 +220,7 @@ app, learns how you categorize, and can add your older spending.
 
 **6. Optional extras**
 
+- 🦙 [A local model instead of Claude](docs/local-models.md): `-f compose.ollama.yml` runs Ollama alongside
 - 📧 [Bank alert emails via Gmail](docs/gmail-setup.md)
 - 🔔 [Push notifications for budget alerts](docs/firebase-setup.md)
 
@@ -283,9 +287,11 @@ Each incoming transaction gets a category and a purpose from, in order:
 1. **Rules** (`/api/v1/rules`): whole-word merchant patterns, optionally limited to an account, weekdays or
    local hours. Rules saved with `"remember": true` beat the generic starter rules for Canadian merchants.
 2. **History**: the last confident (or manually set) categorization of the same merchant.
-3. **Claude** (`CATEGORIZER_MODEL`, default `claude-haiku-5-5`, structured output), given your household
-   description, purposes, and past choices and notes for that merchant. Only when `ANTHROPIC_API_KEY` is
-   set; otherwise the transaction stays `Uncategorized` until you set it.
+3. **The AI model** (`CATEGORIZER_MODEL`, default `claude-haiku-5-5`, structured output), given your
+   household description, purposes, and past choices and notes for that merchant. Claude needs
+   `ANTHROPIC_API_KEY`; with `LLM_PROVIDER=openai` it's any OpenAI-compatible server such as Ollama
+   ([docs/local-models.md](docs/local-models.md)). With neither, the transaction stays `Uncategorized`
+   until you set it.
 
 Manual changes are never overwritten. `POST /api/v1/transactions/recategorize` re-runs the pipeline on
 uncategorized rows (e.g. after adding a key or rules).
@@ -298,8 +304,8 @@ uncategorized rows (e.g. after adding a key or rules).
 <br>
 
 `POST /api/v1/receipts/ocr` takes a receipt photo (JPEG/PNG/WebP up to 15 MB). The image is rotated per
-EXIF, capped at 2000 px and stored under `backend/data/receipts/`; Claude (`RECEIPT_MODEL`, default
-`claude-sonnet-5-5`) reads it into merchant, date and time, tax, total and line items, each with a category
+EXIF, capped at 2000 px and stored under `backend/data/receipts/`; the AI model (`RECEIPT_MODEL`, default
+`claude-sonnet-5-5`, or a local vision model) reads it into merchant, date and time, tax, total and line items, each with a category
 and purpose. Receipts that don't add up (±$0.05) or have no readable date come back with
 `needs_review: true`.
 
@@ -372,7 +378,7 @@ importing the same file twice adds nothing.
 |---|---|
 | API | Python 3.11, FastAPI, SQLAlchemy, Alembic |
 | Database | Postgres 16 |
-| AI | Claude (Haiku to categorize, Sonnet to read receipts) |
+| AI | Claude (Haiku to categorize, Sonnet to read receipts), or any OpenAI-compatible server (Ollama, llama.cpp, vLLM) |
 | Android | Kotlin, Jetpack Compose, Retrofit, ML Kit document scanner, Firebase Cloud Messaging |
 | Web app | Plain HTML, CSS and JavaScript |
 | Deploy | Docker Compose; Tailscale or Caddy for HTTPS |
@@ -416,7 +422,7 @@ More on the design choices: **[docs/architecture.md](docs/architecture.md)**.
 
 - Your data lives in your own Postgres database. The only thing that leaves it is what Claude needs, and
   only if you add an API key: merchant names, amounts and notes for categorizing, and receipt photos for
-  reading.
+  reading. With a local model, nothing leaves your server at all.
 - Gmail access is read-only, and only alert emails from known bank senders are parsed; statements, offers
   and one-time codes are ignored and never stored.
 - On a home server the API listens only on your Tailscale network. On a VPS it sits behind Caddy with HTTPS.
@@ -431,6 +437,8 @@ More on the design choices: **[docs/architecture.md](docs/architecture.md)**.
 - [x] Screenshots and a demo dataset
 - [x] First-run setup wizard in the web app (no editing `household.toml` by hand)
 - [x] History import from any spreadsheet or CSV
+- [x] Categories in the setup wizard
+- [x] Local open models (Ollama or any OpenAI-compatible server) instead of Claude
 - [ ] Banks beyond Canada (contributions very welcome)
 - [ ] Optional encrypted off-site backups
 

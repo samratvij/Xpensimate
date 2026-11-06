@@ -22,8 +22,8 @@ cp .env.example .env                       # then fill it in (below)
 
 In `.env`, generate secrets with `openssl rand -hex 32` for `POSTGRES_PASSWORD` and `API_TOKEN`, and set
 `API_TOKEN_USER` to your name. Each other person gets their own token in `USER_TOKENS` (`Name:token,...`),
-so edits show who made them. `ANTHROPIC_API_KEY` is optional but recommended: without it there is no
-automatic categorization fallback or receipt reading.
+so edits show who made them. `ANTHROPIC_API_KEY` is optional but recommended: without it (or a local
+model, [local-models.md](local-models.md)) there is no automatic categorization fallback or receipt reading.
 
 Your household (who spending is for, and your cards) is set up in the app: the first time you sign in to
 the web app, a short setup wizard asks for it, and More → Household changes it later. It's saved in

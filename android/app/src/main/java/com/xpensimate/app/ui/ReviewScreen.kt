@@ -79,7 +79,7 @@ private fun ReviewContent(r: MonthReview, onOpenTransaction: (String) -> Unit, o
         item { SummaryCard(r) }
 
         if (r.needsCheck.isNotEmpty()) item {
-            SectionCard("Needs a look (${r.needsCheck.size})", "Guesses Claude wasn't sure about. Tap to confirm or fix.") {
+            SectionCard("Needs a look (${r.needsCheck.size})", "Guesses the AI wasn't sure about. Tap to confirm or fix.") {
                 r.needsCheck.forEach { t ->
                     Row(Modifier.fillMaxWidth().clickable { onOpenTransaction(t.id) }.padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {

@@ -97,8 +97,8 @@ private fun Throwable.uploadMessage(): String =
     if (this is HttpException) when (code()) {
         422 -> "That doesn't look like a receipt. Try again with the whole receipt in frame."
         415 -> "That image couldn't be read."
-        502 -> "Claude couldn't read the receipt right now. Try again in a minute."
-        503 -> "Receipt reading isn't set up on the server (no Claude API key)."
+        502 -> "The receipt couldn't be read right now. Try again in a minute."
+        503 -> "Receipt reading isn't set up on the server (no Claude API key or local model)."
         else -> friendly()
     } else friendly()
 
@@ -157,7 +157,7 @@ fun ReceiptsScreen(vm: ReceiptsViewModel, onOpen: (String) -> Unit) {
             text = {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     CircularProgressIndicator()
-                    Text("Claude is reading the lines. This can take up to half a minute.")
+                    Text("Reading the lines. This can take up to a minute.")
                 }
             },
         )

@@ -25,7 +25,7 @@ def fake_claude(monkeypatch):
         return LlmClassification(category="Shopping", purpose="Shared", confidence=0.876)
 
     monkeypatch.setattr(get_settings(), "anthropic_api_key", "test-key")
-    monkeypatch.setattr(categorizer, "classify_with_claude", fake)
+    monkeypatch.setattr(categorizer, "classify_with_llm", fake)
     return calls
 
 
@@ -79,7 +79,7 @@ def test_account_specific_rule_wins(client):
 
 
 def test_unknown_merchant_without_key_stays_uncategorized(client, monkeypatch):
-    monkeypatch.setattr(categorizer, "classify_with_claude", lambda **_: pytest.fail("Claude must not be called"))
+    monkeypatch.setattr(categorizer, "classify_with_llm", lambda **_: pytest.fail("Claude must not be called"))
     body = push(client, "ZXQ HOLDINGS")
     assert (body["category"], body["categorized_by"], body["inference_confidence"]) == ("Uncategorized", "none", 0.0)
 
@@ -100,7 +100,7 @@ def test_rules_skip_claude(client, fake_claude):
 
 def test_claude_failure_leaves_uncategorized(client, monkeypatch):
     monkeypatch.setattr(get_settings(), "anthropic_api_key", "test-key")
-    monkeypatch.setattr(categorizer, "classify_with_claude", lambda **_: None)
+    monkeypatch.setattr(categorizer, "classify_with_llm", lambda **_: None)
     assert push(client, "NEWEGG CANADA")["category"] == "Uncategorized"
 
 
@@ -160,7 +160,7 @@ def test_recategorize_fills_gaps_and_respects_manual(client, monkeypatch):
 
     monkeypatch.setattr(get_settings(), "anthropic_api_key", "test-key")
     monkeypatch.setattr(
-        categorizer, "classify_with_claude",
+        categorizer, "classify_with_llm",
         lambda **_: LlmClassification(category="Shopping", purpose="Shared", confidence=0.9),
     )
     # The manual row is reused as history for its sibling; it is never itself rewritten.

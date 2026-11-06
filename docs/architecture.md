@@ -10,8 +10,8 @@
 - **Web app** (`backend/app/web/app/`): plain HTML/JS, no build step, for iPhone and laptops.
 
 ## Taxonomy: what + who, and budget lines
-- **Category ("what")** is the household's own list (Grocery, Eating Out, Gas & Parking, …), editable in the
-  apps (add / rename / merge).
+- **Category ("what")** is the household's own list (Grocery, Eating Out, Gas & Parking, …), chosen in the
+  setup wizard and editable in the apps (add / rename / merge).
 - **Purpose ("who")** comes from `household.toml`: a shared default plus one entry per person, family member
   or other group whose spending is budgeted separately.
 - **Budget lines** come from the pair: shared spending is budgeted by category, everything else by its
@@ -30,6 +30,12 @@ and unknown merchants stay Uncategorized until you set them (which then teaches 
 A small model categorizes (`CATEGORIZER_MODEL`, default Claude Haiku) and a stronger one reads receipt photos
 (`RECEIPT_MODEL`, default Claude Sonnet). Categorizing is a short classification, so the small model does
 it well at a fraction of the cost; low-confidence guesses are flagged for review.
+
+Both go through one function (`app/services/llm.py: ask`) that talks to Claude or, with
+`LLM_PROVIDER=openai`, to any OpenAI-compatible server (Ollama, llama.cpp, vLLM, LM Studio). Either way the
+answer is constrained by a JSON schema built per request from the live categories and purposes, then
+validated; a failure leaves the charge uncategorized rather than blocking ingestion. See
+[local-models.md](local-models.md).
 
 ## Accounts and card digits
 Accounts are listed in `household.toml`. Every alert or notification goes to the account whose

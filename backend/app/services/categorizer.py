@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.taxonomy import DEFAULT_PURPOSE, UNCATEGORIZED
 from app.db.models import Account, CategorizationExample, CategorizationRule, Transaction, TransactionItem
-from app.services.llm import classify_with_claude
+from app.services.llm import classify_with_llm
 from app.services.categories import category_names
 from app.services.merchant import matches_pattern, merchant_key, normalize_merchant
 
@@ -174,9 +174,9 @@ def categorize(
             source="history",
         )
 
-    if settings.anthropic_api_key:
+    if settings.ai_enabled():
         account = db.get(Account, account_id) if account_id else None
-        result = classify_with_claude(
+        result = classify_with_llm(
             merchant_raw=merchant,
             merchant=normalized,
             amount=amount,
