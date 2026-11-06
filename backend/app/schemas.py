@@ -434,6 +434,16 @@ class CategoryName(BaseModel):
     name: str = Field(min_length=1, max_length=64)
 
 
+class CategoryEdit(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    # The current name this entry keeps or renames; None for a new category.
+    original: str | None = None
+
+
+class CategoryList(BaseModel):
+    categories: list[CategoryEdit] = Field(min_length=1, max_length=100)
+
+
 class HealthCheck(BaseModel):
     name: str
     status: Literal["ok", "warning", "error", "off"]

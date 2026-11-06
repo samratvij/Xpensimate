@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.db.base import get_db
 from app.db.models import BudgetEnvelope
-from app.schemas import CategoryName, CategoryOut
+from app.schemas import CategoryList, CategoryName, CategoryOut
 from app.services import categories as svc
 
 router = APIRouter(prefix="/categories", tags=["categories"])
@@ -15,6 +15,13 @@ def list_categories(db: Session = Depends(get_db)) -> list[CategoryOut]:
     used = svc.usage(db)
     budgets = {b.category: b.monthly_limit for b in db.scalars(select(BudgetEnvelope))}
     return [CategoryOut(name=n, transactions=used.get(n, 0), monthly_limit=budgets.get(n)) for n in svc.category_names(db)]
+
+
+@router.put("", response_model=list[CategoryOut])
+def set_categories(body: CategoryList, db: Session = Depends(get_db)) -> list[CategoryOut]:
+    """Saves the whole list at once (setup): adds, renames, reorders, and removes categories nothing is filed under."""
+    svc.set_categories(db, [(c.name, c.original) for c in body.categories])
+    return list_categories(db)
 
 
 @router.post("", response_model=CategoryOut, status_code=status.HTTP_201_CREATED)

@@ -549,13 +549,13 @@ const UPLOAD_ERRORS = {
   422: "That doesn't look like a receipt. Try again with the whole receipt in frame.",
   415: "That image couldn't be read.",
   413: "That photo is too large.",
-  502: "Claude couldn't read the receipt right now. Try again in a minute.",
-  503: "Receipt reading isn't set up on the server (no Claude API key).",
+  502: "The receipt couldn't be read right now. Try again in a minute.",
+  503: "Receipt reading isn't set up on the server (no Claude API key or local model).",
 };
 
 async function uploadReceipt(file) {
   openSheet(`<h2>Reading receipt…</h2><div class="row"><div class="spinner" style="margin:12px 0"></div>
-    <p class="muted">Claude is reading the lines. This can take up to half a minute.</p></div>`, { locked: true });
+    <p class="muted">Reading the lines. This can take up to a minute.</p></div>`, { locked: true });
   try {
     const form = new FormData();
     form.append("file", await compressImage(file), "receipt.jpg");
@@ -776,7 +776,7 @@ async function reviewScreen(ctx) {
     <div class="stats">${comparison("vs last month", r.total_spent, r.previous_total)}${comparison("vs 3-month average", r.total_spent, r.average_3m)}</div></div>`;
 
   const check = r.needs_check.length ? `<div class="card flush"><div style="padding:16px 16px 4px"><h3>Needs a look (${r.needs_check.length})</h3>
-    <div class="small muted">Guesses Claude wasn't sure about. Tap to confirm or fix.</div></div><div class="list">
+    <div class="small muted">Guesses the AI wasn't sure about. Tap to confirm or fix.</div></div><div class="list">
     ${r.needs_check.map(t => `<a class="item" href="#/txn/${t.id}">${badge(t.budget_line, "sm")}
       <div class="grow"><div class="ellipsis">${esc(merchant(t))}</div><div class="sub">Guessed ${esc(t.budget_line)} · ${pct(t.inference_confidence * 100)} sure</div></div>
       <span class="amt">${money(t.amount)}</span></a>`).join("")}</div></div>` : "";
@@ -1012,11 +1012,12 @@ function householdBody(d) {
 }
 
 async function householdScreen(ctx) {
-  const h = await api("/household");
+  const [h, cats] = await Promise.all([api("/household"), api("/categories")]);
   if (!ctx.alive()) return;
   const setup = h.setup_needed;
   const d = householdDraft(h);
-  const steps = ["About you", "People", "Accounts", "Review"];
+  d.categories = cats.map(c => ({ name: c.name, original: c.name, uses: c.transactions }));
+  const steps = ["About you", "People", "Categories", "Accounts", "Review"];
   let step = 0, error = "";
   if (setup) { $("#tabs").hidden = true; $("#back").hidden = true; ctx.title("Set up Xpensimate"); }
 
@@ -1037,6 +1038,16 @@ async function householdScreen(ctx) {
     </div>`;
   }).join("");
 
+  const categoriesHtml = () => `<div class="card small muted">What money is spent on. Shared spending is budgeted
+      by these, and every receipt line gets one. Rename or remove the starter ones and add your own; you set
+      the budgets later.</div>
+    <div class="card flush list">${d.categories.map((c, i) => `<div class="item static">${badge(c.original || c.name)}
+      <div class="grow" style="min-width:0"><input class="input" data-cat="${i}" value="${esc(c.name)}" maxlength="64" placeholder="e.g. Pets" aria-label="Category name">
+        ${c.uses ? `<div class="sub small muted" style="margin-top:4px">${plural(c.uses, "charge")} · merge it in Categories to remove it</div>` : ""}</div>
+      ${c.uses ? "" : `<button class="icon-btn" data-remove-cat="${i}" aria-label="Remove ${esc(c.name)}" style="color:var(--critical)">✕</button>`}
+    </div>`).join("")}</div>
+    <button class="btn secondary" data-add-cat>+ Add a category</button>`;
+
   const bankOptions = a => [...h.known_accounts.map(k => `<option value="${esc(k.id)}" ${a.id === k.id ? "selected" : ""}>${esc(k.name)}</option>`),
     `<option value="" ${a.known ? "" : "selected"}>Another card or account…</option>`].join("");
   const accountsHtml = () => d.accounts.map((a, i) => `<div class="card stack" data-account="${i}">
@@ -1055,6 +1066,7 @@ async function householdScreen(ctx) {
         ${body.purposes.map(p => `<div class="row" style="margin-top:6px"><span class="badge sm" aria-hidden="true">${p.budget_line ? PERSON_ICONS[p.icon] : "🛒"}</span>
           <div class="grow"><b>${esc(p.name)}</b><div class="sub small muted">${!p.budget_line ? "Budgeted by category"
             : p.transfer_budget_line ? `Budgeted as ${esc(p.transfer_budget_line)} (money sent) and ${esc(p.budget_line)}` : `Budgeted as ${esc(p.budget_line)}`}</div></div></div>`).join("")}</div>
+      <div><div class="small muted">Categories</div><div>${esc(d.categories.map(c => c.name.trim()).join(", "))}</div></div>
       <div><div class="small muted">Accounts</div>${body.accounts.length ? body.accounts.map(a => `<div>${esc(a.name)}${a.card_last4 ? ` <span class="muted">•••• ${esc(a.card_last4)}</span>` : ""}</div>`).join("")
         : `<div class="muted">None yet: purchases still come in, without an account.</div>`}</div>
     </div>`;
@@ -1063,13 +1075,14 @@ async function householdScreen(ctx) {
   const sections = [
     () => `<div class="card stack">
         <h3>${setup ? "Welcome! Let's set up your household" : "About your household"}</h3>
-        <div class="small muted">A sentence about who you are and where you live. Claude reads it when it sorts a purchase you haven't seen before.</div>
+        <div class="small muted">A sentence about who you are and where you live. The AI model reads it when it sorts a purchase you haven't seen before.</div>
         <textarea class="input note-input" data-desc rows="3" style="min-height:88px" maxlength="500" placeholder="e.g. two people in Toronto, Canada, Alex and Sam, who also help Alex's parents">${esc(d.description)}</textarea>
       </div>`,
     () => `<div class="card small muted">Every purchase is for someone. <b>Shared</b> spending (groceries, rent, eating out…) is
         budgeted by category. Add the people whose own spending you want to budget separately.</div>
       ${peopleHtml()}
       <button class="btn secondary" data-add-person>+ Add a person</button>`,
+    categoriesHtml,
     () => `<div class="card small muted">Your cards and bank accounts. When a bank alert shows a card's last 4 digits,
         the purchase goes to that account. You can skip this and add them later.</div>
       ${accountsHtml()}
@@ -1090,13 +1103,24 @@ async function householdScreen(ctx) {
   };
 
   const check = () => {
-    if (step === 0 && !d.description.trim()) return "Add a few words about your household.";
-    if (step === 1) {
+    const at = steps[step];
+    if (at === "About you" && !d.description.trim()) return "Add a few words about your household.";
+    if (at === "People") {
       const names = d.people.map(p => p.name.trim());
       if (names.some(n => !n)) return "Every person needs a name.";
       if (new Set([...names, "Shared"]).size !== names.length + 1) return "Each person needs a different name (and not \"Shared\").";
     }
-    if (step === 2) {
+    if (at === "Categories") {
+      const names = d.categories.map(c => c.name.trim());
+      if (!names.length) return "Keep at least one category.";
+      if (names.some(n => !n)) return "Every category needs a name.";
+      if (names.some(n => n.includes("/"))) return "A category name can't contain \"/\".";
+      if (new Set(names.map(n => n.toLowerCase())).size !== names.length) return "Each category needs a different name.";
+      const taken = new Set(["Uncategorized", ...householdBody(d).purposes.flatMap(p => [p.budget_line, p.transfer_budget_line]).filter(Boolean)]);
+      const clash = names.find(n => taken.has(n));
+      if (clash) return `"${clash}" is already a person's budget line (or means uncategorized); pick another name.`;
+    }
+    if (at === "Accounts") {
       if (d.accounts.some(a => !a.name.trim() || !a.institution.trim())) return "Every account needs a bank and a name.";
       if (d.accounts.some(a => a.card_last4.trim() && !/^\d{4}$/.test(a.card_last4.trim()))) return "Card digits are the last 4 numbers on the card.";
     }
@@ -1131,6 +1155,13 @@ async function householdScreen(ctx) {
       }));
       $$("[data-kind]", card).forEach(b => b.onclick = () => { p.icon = b.dataset.kind; p.custom = false; draw(); });
     });
+    $$("[data-cat]", v).forEach(input => input.addEventListener("input", () => { d.categories[+input.dataset.cat].name = input.value; }));
+    $$("[data-remove-cat]", v).forEach(b => b.onclick = () => { d.categories.splice(+b.dataset.removeCat, 1); draw(); });
+    $("[data-add-cat]", v)?.addEventListener("click", () => {
+      d.categories.push({ name: "", original: null, uses: 0 });
+      draw();
+      $$("[data-cat]", ctx.view).at(-1).focus();
+    });
     $$("[data-remove-person]", v).forEach(b => b.onclick = () => { d.people.splice(+b.dataset.removePerson, 1); draw(); });
     $$("[data-account]", v).forEach(card => {
       const a = d.accounts[+card.dataset.account];
@@ -1157,6 +1188,8 @@ async function householdScreen(ctx) {
     btn.disabled = true;
     try {
       await api("/household", { method: "PUT", body: householdBody(d) });
+      await api("/categories", { method: "PUT", body: { categories: d.categories.map(c => ({ name: c.name.trim(), original: c.original })) } });
+      await taxonomy(true);
       state.taxonomy = null;
       state.setupNeeded = false;
       toast(setup ? "You're all set" : "Household saved");

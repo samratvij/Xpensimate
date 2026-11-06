@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.db.models import BudgetEnvelope, CategorizationRule, RecurringExpense, Transaction
 from app.services.llm import output_model
@@ -83,3 +83,45 @@ def test_claude_answer_schema_uses_the_live_list(client):
     client.post("/api/v1/categories", json={"name": "Pets"})
     schema = output_model(["Grocery", "Pets"]).model_json_schema()
     assert schema["properties"]["category"]["enum"] == ["Grocery", "Pets"]
+
+
+def put(client, *entries):
+    return client.put("/api/v1/categories", json={"categories": [
+        {"name": e, "original": e} if isinstance(e, str) else {"name": e[0], "original": e[1]} for e in entries]})
+
+
+def test_setup_saves_the_whole_list(client, db):
+    db.add(BudgetEnvelope(category="Grocery", monthly_limit=Decimal("600")))
+    db.commit()
+    rules_before = db.scalar(select(func.count()).select_from(CategorizationRule).where(
+        CategorizationRule.target_category == "Gas & Parking"))
+    assert rules_before
+    got = put(client, ("Food", "Grocery"), "Eating Out", ("Pets", None), ("Fun", "Misc"))
+    assert got.status_code == 200, got.text
+    assert names(client) == ["Food", "Eating Out", "Pets", "Fun"]
+    assert db.get(BudgetEnvelope, "Food").monthly_limit == Decimal("600")
+    # A removed category takes its starter rules with it; renamed ones keep theirs.
+    targets = set(db.scalars(select(CategorizationRule.target_category)))
+    assert "Gas & Parking" not in targets and "Food" in targets and targets <= {"Food", "Eating Out", "Pets", "Fun"}
+    assert set(output_model(names(client)).model_fields["category"].annotation.__args__) == {"Food", "Eating Out", "Pets", "Fun"}
+
+
+def test_setup_can_swap_two_names(client, db):
+    add_txn(db, "Grocery")
+    assert put(client, ("Eating Out", "Grocery"), ("Grocery", "Eating Out")).status_code == 200
+    assert db.scalar(select(Transaction.category)) == "Eating Out"
+
+
+def test_setup_keeps_categories_in_use(client, db):
+    add_txn(db, "Car")
+    got = put(client, "Grocery")
+    assert got.status_code == 409 and "Car" in got.json()["detail"] and "merge" in got.json()["detail"]
+    assert "Car" in names(client) and len(names(client)) == 22
+
+
+def test_setup_list_is_validated(client):
+    assert put(client, "Grocery", ("grocery", None)).status_code == 409
+    assert put(client, ("Alex Personal", None)).status_code == 422
+    assert put(client, ("A/B", None)).status_code == 422
+    assert put(client, ("X", "Not A Category")).status_code == 422
+    assert client.put("/api/v1/categories", json={"categories": []}).status_code == 422
