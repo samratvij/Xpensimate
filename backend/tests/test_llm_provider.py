@@ -110,3 +110,12 @@ def test_claude_stays_the_default(monkeypatch):
     monkeypatch.setattr(settings, "anthropic_api_key", "")
     assert settings.llm_provider == "anthropic" and not settings.ai_enabled()
     assert (settings.categorizer(), settings.receipt_reader()) == ("claude-haiku-5-5", "claude-sonnet-5-5")
+
+
+def test_the_receipt_prompt_follows_the_household(tmp_path, monkeypatch):
+    from app.services.ocr_service import system_prompt
+    path = tmp_path / "household.toml"
+    path.write_text('description = "two people in Dubai, UAE"\ncurrency = "AED"\n[[purposes]]\nname = "Shared"\n')
+    monkeypatch.setenv("HOUSEHOLD_FILE", str(path))
+    prompt = system_prompt(CATEGORIES)
+    assert "AED" in prompt and "Dubai, UAE" in prompt and "Canada" not in prompt

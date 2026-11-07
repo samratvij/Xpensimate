@@ -10,6 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, create_model
 
 from app.core.config import get_settings
+from app.core.household import load_household
 from app.core.taxonomy import purposes
 from app.services.llm import LlmError, ask, household_guide
 
@@ -23,8 +24,9 @@ BALANCE_TOLERANCE = Decimal("0.05")
 DEFAULT_TIME = time(12, 0)
 
 def system_prompt(categories: list[str]) -> str:
-    return f"""You read photos of shopping receipts, mostly from Canada (HST/GST/PST/QST, bottle deposits,
-environmental fees, PC Optimum and other loyalty lines).
+    return f"""You read photos of shopping receipts for one household. Amounts are usually in
+{load_household().currency}; where the household lives (below) tells you what its receipts carry: sales tax,
+VAT or GST lines, bottle deposits, environmental fees, loyalty and points lines.
 
 Extract every purchased line:
 - Merge multi-line items into one line, e.g. a weight line "1.234 kg @ $2.99/kg" belongs to the item above it.
