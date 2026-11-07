@@ -21,8 +21,25 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const enc = encodeURIComponent;
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const cad = new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD" });
-const money = n => cad.format(Number(n) || 0);
+// Amounts show in the household's currency (from the server; remembered so the first screen is right too).
+let moneyFormat;
+function setCurrency(code) {
+  try {
+    moneyFormat = new Intl.NumberFormat(undefined, { style: "currency", currency: code, currencyDisplay: "narrowSymbol" });
+    localStorage.setItem("xpensimate.currency", code);
+  } catch { moneyFormat ??= new Intl.NumberFormat(undefined, { style: "currency", currency: "CAD", currencyDisplay: "narrowSymbol" }); }
+}
+setCurrency(localStorage.getItem("xpensimate.currency") || "CAD");
+const money = n => moneyFormat.format(Number(n) || 0);
+const currencyName = code => { try { return new Intl.DisplayNames(undefined, { type: "currency" }).of(code); } catch { return code; } };
+// Common currencies first, then every other one the browser knows.
+const COMMON_CURRENCIES = ["CAD", "USD", "EUR", "GBP", "INR", "AUD", "NZD", "CHF", "JPY", "SGD", "AED", "MXN", "BRL", "ZAR"];
+const allCurrencies = () => [...new Set([...COMMON_CURRENCIES, ...(Intl.supportedValuesOf?.("currency") ?? [])])];
+// A first guess for a new household, from the browser's region.
+const REGION_CURRENCY = { CA: "CAD", US: "USD", GB: "GBP", IN: "INR", AU: "AUD", NZ: "NZD", CH: "CHF", JP: "JPY", SG: "SGD",
+  AE: "AED", MX: "MXN", BR: "BRL", ZA: "ZAR", IE: "EUR", DE: "EUR", FR: "EUR", ES: "EUR", IT: "EUR", NL: "EUR", BE: "EUR",
+  AT: "EUR", PT: "EUR", FI: "EUR", GR: "EUR" };
+const guessCurrency = () => { try { return REGION_CURRENCY[new Intl.Locale(navigator.language).maximize().region]; } catch { return undefined; } };
 const pct = n => `${Math.round(n)}%`;
 const signedPct = change => `${change >= 0 ? "+" : "−"}${Math.abs(Math.round(change))}%`;
 const clamp01 = x => Math.max(0, Math.min(1, x || 0));
@@ -51,9 +68,9 @@ const fmtWhen = iso => new Date(iso).toLocaleString("en-CA", { month: "short", d
 const fmtFull = iso => new Date(iso).toLocaleString("en-CA", { weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 const fmtDate = iso => new Date(iso).toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" });
 
-/** "12.5", "$12.50" or "1,200" as cents; null unless a whole number of cents. */
+/** "12.5", "$12.50", "€12.50" or "1,200" as cents; null unless a whole number of cents. */
 function toCents(text) {
-  const s = String(text).trim().replace(/^\$/, "").replace(/,/g, "");
+  const s = String(text).trim().replace(/[^\d.,\-]/g, "").replace(/,/g, "");
   if (!/^-?\d+(\.\d{0,2})?$|^-?\.\d{1,2}$/.test(s)) return null;
   const [whole, frac = ""] = s.replace("-", "").split(".");
   const cents = Number(whole || 0) * 100 + Number((frac + "00").slice(0, 2));
@@ -986,7 +1003,7 @@ function householdDraft(h) {
     split: !!p.transfer_budget_line, guide: p.guide, original: { name: p.name, icon: p.icon }, custom: true,
   }));
   const accounts = h.accounts.map(a => ({ ...a, card_last4: a.card_last4 || "", known: h.known_accounts.some(k => k.id === a.id) }));
-  return { description: h.setup_needed ? "" : h.description, people, accounts };
+  return { description: h.setup_needed ? "" : h.description, currency: h.currency, originalCurrency: h.currency, people, accounts };
 }
 
 function slug(text) {
@@ -996,6 +1013,7 @@ function slug(text) {
 function householdBody(d) {
   return {
     description: d.description.trim(),
+    currency: d.currency,
     purposes: [{ name: "Shared" }, ...d.people.map(p => {
       const lines = p.custom ? { line: p.line, transfer: p.transfer } : defaultLines(p);
       const same = p.original && p.original.name === p.name.trim() && p.original.icon === p.icon;
@@ -1005,7 +1023,9 @@ function householdBody(d) {
       };
     })],
     accounts: d.accounts.map(a => ({
-      id: a.id, institution: a.institution.trim(), name: a.name.trim(), currency: a.currency || "CAD",
+      id: a.id, institution: a.institution.trim(), name: a.name.trim(),
+      // Your own accounts follow the household's currency unless they had one of their own.
+      currency: a.known || (a.currency && a.currency !== d.originalCurrency) ? a.currency : null,
       card_last4: a.card_last4.trim() || null,
     })),
   };
@@ -1016,6 +1036,7 @@ async function householdScreen(ctx) {
   if (!ctx.alive()) return;
   const setup = h.setup_needed;
   const d = householdDraft(h);
+  if (setup) d.currency = guessCurrency() || h.currency;
   d.categories = cats.map(c => ({ name: c.name, original: c.name, uses: c.transactions }));
   const steps = ["About you", "People", "Categories", "Accounts", "Review"];
   let step = 0, error = "";
@@ -1062,6 +1083,7 @@ async function householdScreen(ctx) {
     const body = householdBody(d);
     return `<div class="card stack">
       <div><div class="small muted">Your household</div><div>${esc(body.description || "—")}</div></div>
+      <div><div class="small muted">Currency</div><div>${esc(currencyName(body.currency))} (${esc(body.currency)})</div></div>
       <div><div class="small muted">Who spending is for</div>
         ${body.purposes.map(p => `<div class="row" style="margin-top:6px"><span class="badge sm" aria-hidden="true">${p.budget_line ? PERSON_ICONS[p.icon] : "🛒"}</span>
           <div class="grow"><b>${esc(p.name)}</b><div class="sub small muted">${!p.budget_line ? "Budgeted by category"
@@ -1077,6 +1099,9 @@ async function householdScreen(ctx) {
         <h3>${setup ? "Welcome! Let's set up your household" : "About your household"}</h3>
         <div class="small muted">A sentence about who you are and where you live. The AI model reads it when it sorts a purchase you haven't seen before.</div>
         <textarea class="input note-input" data-desc rows="3" style="min-height:88px" maxlength="500" placeholder="e.g. two people in Toronto, Canada, Alex and Sam, who also help Alex's parents">${esc(d.description)}</textarea>
+        <label class="field">Currency<select data-currency>${allCurrencies().map(c =>
+          `<option value="${c}" ${c === d.currency ? "selected" : ""}>${esc(currencyName(c))} (${c})</option>`).join("")}</select></label>
+        <div class="small muted">Amounts show in it. ${setup ? "" : "Changing it relabels amounts; it doesn't convert them."}</div>
       </div>`,
     () => `<div class="card small muted">Every purchase is for someone. <b>Shared</b> spending (groceries, rent, eating out…) is
         budgeted by category. Add the people whose own spending you want to budget separately.</div>
@@ -1131,6 +1156,7 @@ async function householdScreen(ctx) {
   function bind() {
     const v = ctx.view;
     $("[data-desc]", v)?.addEventListener("input", e => { d.description = e.target.value; });
+    $("[data-currency]", v)?.addEventListener("change", e => { d.currency = e.target.value; });
     $$("[data-step]", v).forEach(b => b.onclick = () => { let to = +b.dataset.step; if (to > step) { for (; step < to && !(error = check()); step++); draw(); } else go(to); });
     $("[data-prev]", v)?.addEventListener("click", () => go(step - 1));
     $("[data-next]", v)?.addEventListener("click", () => go(step + 1));
@@ -1138,7 +1164,7 @@ async function householdScreen(ctx) {
     $("[data-add-account]", v)?.addEventListener("click", () => {
       const used = new Set(d.accounts.map(a => a.id));
       const k = h.known_accounts.find(k => !used.has(k.id));
-      d.accounts.push(k ? { ...k, card_last4: "", known: true } : { id: "", institution: "", name: "", currency: "CAD", card_last4: "", known: false });
+      d.accounts.push(k ? { ...k, card_last4: "", known: true } : { id: "", institution: "", name: "", currency: null, card_last4: "", known: false });
       draw();
     });
     $$("[data-person]", v).forEach(card => {
@@ -1168,7 +1194,7 @@ async function householdScreen(ctx) {
       $$("[data-a]", card).forEach(input => input.addEventListener(input.tagName === "SELECT" ? "change" : "input", () => {
         if (input.dataset.a === "known") {
           const k = h.known_accounts.find(k => k.id === input.value);
-          Object.assign(a, k ? { ...k, card_last4: a.card_last4, known: true } : { id: "", institution: "", name: "", known: false });
+          Object.assign(a, k ? { ...k, card_last4: a.card_last4, known: true } : { id: "", institution: "", name: "", currency: null, known: false });
           draw();
           return;
         }
@@ -1192,6 +1218,7 @@ async function householdScreen(ctx) {
       await taxonomy(true);
       state.taxonomy = null;
       state.setupNeeded = false;
+      setCurrency(d.currency);
       toast(setup ? "You're all set" : "Household saved");
       location.hash = setup ? "#/" : "#/more";
       if (setup) route();
@@ -1360,7 +1387,11 @@ async function route() {
 
   // A new server starts with the setup wizard.
   if (state.setupNeeded === undefined) {
-    try { state.setupNeeded = (await api("/household")).setup_needed; } catch { state.setupNeeded = false; }
+    try {
+      const h = await api("/household");
+      state.setupNeeded = h.setup_needed;
+      setCurrency(h.currency);
+    } catch { state.setupNeeded = false; }
     if (seq !== renderSeq) return;
   }
   if (state.setupNeeded && location.hash !== "#/household") { location.replace("#/household"); return route(); }

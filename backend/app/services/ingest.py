@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.budget_evaluator import check_transaction
+from app.core.household import load_household
 from app.db.models import RawIngestLog, Transaction
 from app.services.categorizer import apply_classification, categorize
 from app.services.reconciler import merchant_score, try_match_transaction
@@ -22,7 +23,8 @@ class NewTransaction:
     timestamp: datetime
     amount: Decimal
     merchant: str
-    currency: str = "CAD"
+    # None: the household's currency.
+    currency: str | None = None
     reconciliation_status: str = "SETTLED"
     bank_category: str | None = None
     # Not an expense (e.g. a card payment from a statement): stored for dedupe/audit, never categorized.
@@ -86,7 +88,7 @@ def ingest_transaction(db: Session, new: NewTransaction, raw_payload: dict[str, 
         timestamp=new.timestamp,
         amount=new.amount,
         txn_type="REFUND" if new.amount < 0 else "PURCHASE",
-        currency=new.currency.upper(),
+        currency=(new.currency or load_household().currency).upper(),
         merchant_raw=new.merchant,
         reconciliation_status=new.reconciliation_status,
         category_is_manual=False,

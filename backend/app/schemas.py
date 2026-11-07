@@ -29,7 +29,8 @@ class TransactionPush(BaseModel):
     account_id: str | None = None
     timestamp: AwareDatetime
     amount: Decimal = Field(max_digits=10, decimal_places=2)
-    currency: str = Field("CAD", min_length=3, max_length=3)
+    # The household's currency when not given.
+    currency: str | None = Field(None, min_length=3, max_length=3)
     merchant: str = Field(min_length=1, max_length=255)
     # Stable id of the upstream event, used to drop duplicates.
     source_ref: str | None = Field(None, max_length=255)
@@ -139,6 +140,8 @@ class TaxonomyOut(BaseModel):
     # The budget lines that belong to a person or family, not a category, with how to draw them
     # (person | abroad | family).
     person_lines: dict[str, str]
+    # ISO 4217 code to show amounts in.
+    currency: str
 
 
 class CategorySpend(BaseModel):

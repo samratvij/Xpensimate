@@ -55,12 +55,13 @@ class AccountIn(BaseModel):
     id: str
     institution: str
     name: str
-    currency: str = "CAD"
+    currency: str | None = None  # the household's when not given
     card_last4: str | None = Field(None, description="Last four digits of the card, which picks the account for an alert")
 
 
 class HouseholdIn(BaseModel):
     description: str
+    currency: str = "CAD"
     purposes: list[PurposeIn]
     accounts: list[AccountIn] = []
 

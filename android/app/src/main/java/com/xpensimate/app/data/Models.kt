@@ -107,6 +107,8 @@ data class Taxonomy(
     @SerialName("budget_lines") val budgetLines: List<String> = emptyList(),
     // Budget lines that belong to a person or family rather than a category: line -> person | abroad | family.
     @SerialName("person_lines") val personLines: Map<String, String> = emptyMap(),
+    // ISO 4217 code the household's amounts are shown in.
+    val currency: String = "CAD",
 )
 
 @Serializable

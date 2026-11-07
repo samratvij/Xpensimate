@@ -199,7 +199,7 @@ cp .env.example .env                       # passwords and tokens: openssl rand 
 Step-by-step for both: **[docs/hosting.md](docs/hosting.md)**.
 
 **3. Set up your household**: open `https://<your-server>/app/` and sign in with your token. A short wizard
-asks who spending is for, which categories you want, and which cards you use; change it any time under
+asks your currency, who spending is for, which categories you want, and which cards you use; change it any time under
 More → Household.
 
 **4. Connect your phone**

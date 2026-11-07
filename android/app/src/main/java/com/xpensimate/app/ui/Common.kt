@@ -17,6 +17,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
@@ -27,12 +30,14 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import retrofit2.HttpException
 import java.io.IOException
+import java.text.DecimalFormat
 import java.text.NumberFormat
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Currency
 import java.util.Locale
 
 sealed interface Load<out T> {
@@ -54,8 +59,28 @@ fun Throwable.friendly(): String = when (this) {
 inline fun <reified VM : ViewModel> rememberViewModel(key: String? = null, crossinline create: () -> VM): VM =
     viewModel(key = key, factory = viewModelFactory { initializer { create() } })
 
-private val money: NumberFormat = NumberFormat.getCurrencyInstance(Locale.CANADA)
-fun Double.money(): String = money.format(this)
+/** The household's currency, from the server's /taxonomy. It's Compose state, so amounts redraw when it arrives. */
+object AppCurrency {
+    var code by mutableStateOf("CAD")
+}
+
+private val moneyFormats = mutableMapOf<String, NumberFormat>()
+
+/** The phone's number style with the household's currency; "CA$", "US$" or "A$" show as plain "$". */
+private fun moneyFormat(code: String): NumberFormat = moneyFormats.getOrPut(code) {
+    NumberFormat.getCurrencyInstance(Locale.getDefault()).apply {
+        runCatching { currency = Currency.getInstance(code) }
+        (this as? DecimalFormat)?.let { format ->
+            val symbols = format.decimalFormatSymbols
+            if (symbols.currencySymbol.length > 1 && symbols.currencySymbol.endsWith("$")) {
+                symbols.currencySymbol = "$"
+                format.decimalFormatSymbols = symbols
+            }
+        }
+    }
+}
+
+fun Double.money(): String = moneyFormat(AppCurrency.code).format(this)
 
 val zone: ZoneId = ZoneId.systemDefault()
 private val monthTitle = DateTimeFormatter.ofPattern("MMMM yyyy")

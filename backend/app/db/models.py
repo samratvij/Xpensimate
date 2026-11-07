@@ -21,6 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.household import load_household
 from app.core.taxonomy import DEFAULT_PURPOSE, UNCATEGORIZED
 from app.db.base import Base
 
@@ -87,7 +88,7 @@ class Transaction(Base):
     # Signed: purchases are positive, refunds negative.
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     txn_type: Mapped[str] = mapped_column(String(16), server_default="PURCHASE")
-    currency: Mapped[str] = mapped_column(String(3), server_default="CAD")
+    currency: Mapped[str] = mapped_column(String(3), default=lambda: load_household().currency, server_default="CAD")
     merchant_raw: Mapped[str] = mapped_column(String(255))
     merchant_normalized: Mapped[str | None] = mapped_column(String(255), index=True)
     category: Mapped[str] = mapped_column(String(64), server_default=UNCATEGORIZED)

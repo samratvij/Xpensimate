@@ -35,6 +35,16 @@ class PurposeDef:
     icon: str = "person"
 
 
+DEFAULT_CURRENCY = "CAD"
+
+
+def check_currency(value: object, where: str) -> str:
+    code = str(value or "").strip().upper()
+    if len(code) != 3 or not code.isalpha():
+        raise HouseholdConfigError(f"{where}: currency must be a 3-letter code such as CAD, USD, EUR or INR")
+    return code
+
+
 @dataclass(frozen=True)
 class AccountDef:
     id: str
@@ -51,6 +61,8 @@ class Household:
     description: str
     purposes: tuple[PurposeDef, ...]
     accounts: tuple[AccountDef, ...]
+    # ISO 4217 code the apps show amounts in, and new charges get when their source doesn't say.
+    currency: str = DEFAULT_CURRENCY
 
 
 # The household before setup: shared spending only.
@@ -94,6 +106,7 @@ def _text(table: dict, key: str, where: str, required: bool = True) -> str | Non
 
 def parse(data: dict) -> Household:
     description = _text(data, "description", "household")
+    currency = check_currency(data.get("currency") or DEFAULT_CURRENCY, "currency")
     purposes = []
     for i, p in enumerate(data.get("purposes", [])):
         where = f"purposes[{i}]"
@@ -136,12 +149,12 @@ def parse(data: dict) -> Household:
             id=account_id,
             institution=_text(a, "institution", where),
             name=_text(a, "name", where),
-            currency=(a.get("currency") or "CAD").upper(),
+            currency=check_currency(a.get("currency") or currency, f"{where}.currency"),
             card_last4=last4,
         ))
     if len({a.id for a in accounts}) != len(accounts):
         raise HouseholdConfigError("account ids must be different")
-    return Household(description=description, purposes=tuple(purposes), accounts=tuple(accounts))
+    return Household(description=description, purposes=tuple(purposes), accounts=tuple(accounts), currency=currency)
 
 
 def household_path() -> Path:
@@ -187,6 +200,7 @@ def to_toml(household: Household) -> str:
         "# hand, people apply right away and accounts on the next restart (docker compose restart api).",
         "",
         f"description = {_toml_string(household.description)}",
+        f"currency = {_toml_string(household.currency)}",
     ]
     for p in household.purposes:
         out += ["", "[[purposes]]", f"name = {_toml_string(p.name)}", f"guide = {_toml_string(p.guide)}"]
@@ -199,7 +213,7 @@ def to_toml(household: Household) -> str:
     for a in household.accounts:
         out += ["", "[[accounts]]", f"id = {_toml_string(a.id)}", f"institution = {_toml_string(a.institution)}",
                 f"name = {_toml_string(a.name)}"]
-        if a.currency != "CAD":
+        if a.currency != household.currency:
             out.append(f"currency = {_toml_string(a.currency)}")
         if a.card_last4:
             out.append(f"card_last4 = {_toml_string(a.card_last4)}")
@@ -210,6 +224,7 @@ def to_dict(household: Household) -> dict:
     """The same shape parse() reads (and the API speaks)."""
     return {
         "description": household.description,
+        "currency": household.currency,
         "purposes": [
             {"name": p.name, "guide": p.guide, "budget_line": p.line, "transfer_budget_line": p.transfer_line,
              "icon": p.icon}

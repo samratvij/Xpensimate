@@ -53,6 +53,7 @@ import com.xpensimate.app.data.Push
 import com.xpensimate.app.data.QueueFlushWorker
 import com.xpensimate.app.data.ServerConfig
 import com.xpensimate.app.ui.AlertsScreen
+import com.xpensimate.app.ui.AppCurrency
 import com.xpensimate.app.ui.AlertsViewModel
 import com.xpensimate.app.ui.BillsScreen
 import com.xpensimate.app.ui.BillsViewModel
@@ -148,7 +149,10 @@ private fun MainScaffold(
     val askPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     LaunchedEffect(config) {
         // Person and family budget lines are the server's to define; the icons need them.
-        runCatching { api.taxonomy() }.onSuccess { PersonLines.kinds = it.personLines }
+        runCatching { api.taxonomy() }.onSuccess {
+            PersonLines.kinds = it.personLines
+            AppCurrency.code = it.currency
+        }
         Push.register(app, api)
         // Send any Wealthsimple / Google Pay purchases captured while the server was unreachable; whatever
         // still can't be sent is left to the background retry.

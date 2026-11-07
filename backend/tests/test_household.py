@@ -102,3 +102,25 @@ def test_a_purpose_in_use_cant_be_removed(client, db, own_file):
     db.commit()
     refused = client.put("/api/v1/household", json=body(purposes=[{"name": "Shared"}]))
     assert refused.status_code == 409 and "1 charge" in refused.json()["detail"]
+
+
+def test_currency_defaults_to_cad_and_is_checked():
+    assert parse(household()).currency == "CAD"
+    assert parse(household(currency="eur")).currency == "EUR"
+    with pytest.raises(HouseholdConfigError, match="3-letter code"):
+        parse(household(currency="Euro"))
+
+
+def test_the_household_currency_is_used_everywhere(client, own_file):
+    accounts = [{"id": "bank_card", "institution": "Bank", "name": "Card"},
+                {"id": "travel", "institution": "Bank", "name": "Travel card", "currency": "USD"}]
+    assert client.put("/api/v1/household", json=body(currency="EUR", accounts=accounts)).status_code == 200
+    saved = tomllib.loads(own_file.read_text())
+    assert saved["currency"] == "EUR" and "currency" not in saved["accounts"][0] and saved["accounts"][1]["currency"] == "USD"
+    assert client.get("/api/v1/taxonomy").json()["currency"] == "EUR"
+    currencies = {a["id"]: a["currency"] for a in client.get("/api/v1/accounts").json()}
+    assert (currencies["bank_card"], currencies["travel"]) == ("EUR", "USD")
+    # A charge whose source doesn't say gets the household's currency.
+    pushed = client.post("/api/v1/transactions/push", json={
+        "timestamp": datetime.now(timezone.utc).isoformat(), "amount": "4.50", "merchant": "Cafe", "source_ref": "c1"}).json()
+    assert pushed["currency"] == "EUR"

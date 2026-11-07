@@ -2,8 +2,12 @@
 # this example shows the format if you'd rather write it by hand: copy it to household.toml (which git ignores).
 # Hand-edited people apply right away; hand-edited accounts after: docker compose restart api
 
-# Who you are, in a few words. The categorizer (Claude) reads this to guess who a purchase was for.
+# Who you are, in a few words. The categorizer (the AI model) reads this to guess who a purchase was for.
 description = "two people in Toronto, Canada, Alex and Sam, who also support Alex's parents"
+
+# The currency the apps show amounts in (a 3-letter code: CAD, USD, EUR, GBP, INR, ...). An account in
+# another currency sets its own `currency`.
+currency = "CAD"
 
 # Purposes: who a purchase was for. The first one is the shared default and is budgeted by category
 # (Grocery, Eating Out, ...). The others get their own budget line, shown under "People" in the apps.
