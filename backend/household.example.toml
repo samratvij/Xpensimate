@@ -46,7 +46,10 @@ icon = "family"
 # budget_line = "Sam Abroad"
 # icon = "abroad"
 
-# Accounts: your cards and bank accounts. Alerts are matched to an account by card_last4 (in quotes).
+# Accounts: your cards and bank accounts. Alerts are matched to an account by card_last4 (in quotes); an
+# account with several cards (a shared credit card with one card each) lists them all: ["1234", "9876"].
+# kind: chequing, credit_card, savings, investment, retirement, loan or asset (TFSA, RRSP, 401k, ISA and
+# similar names work too). owner: whose it is, one of the purposes above (Shared if left out).
 # These ids are the ones the bank parsers fall back to when an alert has no card digits, so keep them
 # for the banks you use; add more accounts with any id you like.
 #   Tangerine: tangerine_mastercard, tangerine_cheq    PC Financial: pc_mastercard, pc_money
@@ -56,16 +59,21 @@ icon = "family"
 id = "tangerine_mastercard"
 institution = "Tangerine"
 name = "Tangerine Money-Back World Mastercard"
-card_last4 = "1234"
+card_last4 = ["1234", "9876"]
+kind = "credit_card"
 
 [[accounts]]
 id = "ws_credit"
 institution = "Wealthsimple"
 name = "Wealthsimple Credit Card"
 card_last4 = "5678"
+kind = "credit_card"
+owner = "Alex"
 
 [[accounts]]
 id = "rbc_visa"
 institution = "RBC"
 name = "RBC Visa (Sam)"
 card_last4 = "4321"
+kind = "credit_card"
+owner = "Sam"

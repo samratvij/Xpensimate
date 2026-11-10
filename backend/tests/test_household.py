@@ -124,3 +124,51 @@ def test_the_household_currency_is_used_everywhere(client, own_file):
     pushed = client.post("/api/v1/transactions/push", json={
         "timestamp": datetime.now(timezone.utc).isoformat(), "amount": "4.50", "merchant": "Cafe", "source_ref": "c1"}).json()
     assert pushed["currency"] == "EUR"
+
+
+def test_accounts_written_before_kinds_still_load():
+    """A household.toml from an earlier Xpensimate: no kind or owner, one card each."""
+    old = household(accounts=[{"id": "ws_credit", "institution": "Wealthsimple", "name": "Card", "card_last4": "1234"},
+                              {"id": "my_bank", "institution": "Bank", "name": "Everyday"}])
+    ws, mine = parse(old).accounts
+    assert (ws.kind, ws.owner, ws.cards) == ("credit_card", "Shared", ["1234"])
+    assert (mine.kind, mine.owner, mine.cards) == ("chequing", "Shared", [])
+
+
+@pytest.mark.parametrize(("written", "kind"), [
+    ("Checking", "chequing"), ("TFSA", "investment"), ("401(k)", "retirement"), ("RRSP", "retirement"),
+    ("ISA", "investment"), ("savings", "savings"), ("mortgage", "loan"),
+])
+def test_regional_account_kinds_become_general_ones(written, kind):
+    data = household(accounts=[{"id": "a", "institution": "Bank", "name": "A", "kind": written}])
+    assert parse(data).accounts[0].kind == kind
+
+
+def test_owner_and_several_cards():
+    data = household(purposes=[SHARED, {"name": "Alex", "guide": "g", "budget_line": "Alex Personal"}], accounts=[
+        {"id": "a", "institution": "Bank", "name": "Joint card", "kind": "credit_card", "card_last4": ["1111", "2222"]},
+        {"id": "b", "institution": "Bank", "name": "Alex's", "owner": "Alex", "card_last4": "3333, 4444"}])
+    joint, alex = parse(data).accounts
+    assert (joint.cards, alex.cards, alex.owner) == (["1111", "2222"], ["3333", "4444"], "Alex")
+    with pytest.raises(HouseholdConfigError, match="owner must be one of"):
+        parse({**data, "accounts": [{"id": "c", "institution": "Bank", "name": "C", "owner": "Nobody"}]})
+    with pytest.raises(HouseholdConfigError, match="kind must be one of"):
+        parse({**data, "accounts": [{"id": "c", "institution": "Bank", "name": "C", "kind": "piggy bank"}]})
+    with pytest.raises(HouseholdConfigError, match="listed twice"):
+        parse({**data, "accounts": [{"id": "c", "institution": "Bank", "name": "C", "card_last4": ["1111", "1111"]}]})
+
+
+def test_kinds_owners_and_cards_are_saved_and_used(client, db, own_file):
+    accounts = [{"id": "tangerine_mastercard", "institution": "Tangerine", "name": "Mastercard", "kind": "credit_card",
+                 "card_last4": ["7001", "7002"]},
+                {"id": "alex_savings", "institution": "Bank", "name": "Savings", "kind": "savings", "owner": "Alex"}]
+    got = client.put("/api/v1/household", json=body(accounts=accounts))
+    assert got.status_code == 200, got.text
+    assert {k["id"] for k in got.json()["account_kinds"]} >= {"chequing", "credit_card", "savings", "retirement"}
+    saved = tomllib.loads(own_file.read_text())["accounts"]
+    assert saved[0]["card_last4"] == ["7001", "7002"] and saved[1]["owner"] == "Alex" and saved[1]["kind"] == "savings"
+    listed = {a["id"]: a for a in client.get("/api/v1/accounts").json()}
+    assert (listed["alex_savings"]["kind"], listed["alex_savings"]["owner"]) == ("savings", "Alex")
+    from app.services.accounts import account_for_alert
+    assert account_for_alert(db, "7002", "tangerine_cheq") == "tangerine_mastercard"
+    assert account_for_alert(db, "7001", None, "Tangerine Mastercard") == "tangerine_mastercard"

@@ -57,8 +57,18 @@ class Account(Base):
     institution: Mapped[str] = mapped_column(String(64))
     account_name: Mapped[str] = mapped_column(String(128))
     currency: Mapped[str] = mapped_column(String(3), server_default="CAD")
-    # Last 4 digits of the card, as shown in Google Wallet notifications and bank alerts.
-    card_last4: Mapped[str | None] = mapped_column(String(4))
+    # Last 4 digits of the card, as shown in Google Wallet notifications and bank alerts. Comma-separated when one
+    # account has several cards (e.g. a shared credit card with a card for each person).
+    card_last4: Mapped[str | None] = mapped_column(String(64))
+    # Whose it is (a purpose: a person, or Shared).
+    owner: Mapped[str] = mapped_column(String(32), server_default=DEFAULT_PURPOSE)
+    # chequing | credit_card | savings | investment | retirement | loan | asset (app/core/accounts.py)
+    kind: Mapped[str] = mapped_column(String(16), server_default="chequing")
+
+    @property
+    def card_digits(self) -> list[str]:
+        """Every card number's last four digits on this account."""
+        return [d.strip() for d in (self.card_last4 or "").split(",") if d.strip()]
 
 
 class RawIngestLog(Base):

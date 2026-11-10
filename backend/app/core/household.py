@@ -10,6 +10,8 @@ import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from app.core.accounts import ACCOUNT_KINDS, normalize_kind
+
 ICONS = ("person", "abroad", "family")
 SHARED = "Shared"
 DEFAULT_FILE = Path(__file__).resolve().parents[2] / "household.toml"
@@ -52,7 +54,16 @@ class AccountDef:
     name: str
     currency: str = "CAD"
     # Last four digits of the card, as bank alerts and Google Wallet show them; picks the account for an alert.
+    # Comma-separated when the account has several cards (one each for two people on a shared credit card).
     card_last4: str | None = None
+    # chequing | credit_card | savings | investment | retirement | loan | asset (app/core/accounts.py).
+    kind: str = "chequing"
+    # Whose account it is: a purpose (a person) or Shared.
+    owner: str = "Shared"
+
+    @property
+    def cards(self) -> list[str]:
+        return [d for d in (self.card_last4 or "").split(",") if d]
 
 
 @dataclass(frozen=True)
@@ -70,14 +81,33 @@ SETUP_HOUSEHOLD = Household(description="a household", purposes=(PurposeDef(SHAR
 
 # Accounts the bank parsers fall back to when an alert has no card digits, offered by the setup wizard.
 KNOWN_ACCOUNTS = (
-    AccountDef("tangerine_mastercard", "Tangerine", "Tangerine Money-Back World Mastercard"),
-    AccountDef("tangerine_cheq", "Tangerine", "Tangerine Chequing"),
-    AccountDef("pc_mastercard", "PC Financial", "PC Financial Mastercard"),
-    AccountDef("pc_money", "PC Financial", "PC Money Account"),
-    AccountDef("ctfs_triangle", "Canadian Tire Financial Services", "Triangle Mastercard"),
-    AccountDef("ws_credit", "Wealthsimple", "Wealthsimple Credit Card"),
-    AccountDef("ws_cash", "Wealthsimple", "Wealthsimple Cash"),
+    AccountDef("tangerine_mastercard", "Tangerine", "Tangerine Money-Back World Mastercard", kind="credit_card"),
+    AccountDef("tangerine_cheq", "Tangerine", "Tangerine Chequing", kind="chequing"),
+    AccountDef("pc_mastercard", "PC Financial", "PC Financial Mastercard", kind="credit_card"),
+    AccountDef("pc_money", "PC Financial", "PC Money Account", kind="chequing"),
+    AccountDef("ctfs_triangle", "Canadian Tire Financial Services", "Triangle Mastercard", kind="credit_card"),
+    AccountDef("ws_credit", "Wealthsimple", "Wealthsimple Credit Card", kind="credit_card"),
+    AccountDef("ws_cash", "Wealthsimple", "Wealthsimple Cash", kind="chequing"),
 )
+KNOWN_KINDS = {a.id: a.kind for a in KNOWN_ACCOUNTS}
+
+
+def parse_cards(value: object, where: str) -> str | None:
+    """card_last4 as written: "1234", ["1234", "5678"] or "1234, 5678". Stored comma-separated, no spaces."""
+    if value in (None, "", []):
+        return None
+    if isinstance(value, str):
+        items = [v.strip() for v in value.split(",")]
+    elif isinstance(value, list) and all(isinstance(v, str) for v in value):
+        items = [v.strip() for v in value]
+    else:
+        items = None
+    if not items or not all(len(v) == 4 and v.isdigit() for v in items):
+        raise HouseholdConfigError(f'{where}: card_last4 must be four digits in quotes, e.g. "1234" '
+                                   '(or a list of them, ["1234", "5678"], for several cards on one account)')
+    if len(set(items)) != len(items):
+        raise HouseholdConfigError(f"{where}: the same card digits are listed twice")
+    return ",".join(items)
 
 
 def default_guide(name: str, icon: str) -> str:
@@ -139,18 +169,26 @@ def parse(data: dict) -> Household:
     accounts = []
     for i, a in enumerate(data.get("accounts", [])):
         where = f"accounts[{i}]"
-        last4 = a.get("card_last4") or None
-        if last4 is not None and not (isinstance(last4, str) and len(last4) == 4 and last4.isdigit()):
-            raise HouseholdConfigError(f'{where}: card_last4 must be four digits in quotes, e.g. "1234"')
+        last4 = parse_cards(a.get("card_last4"), where)
         account_id = _text(a, "id", where)
         if not all(c.isalnum() or c == "_" for c in account_id):
             raise HouseholdConfigError(f"{where}: an account id can only have letters, digits and _")
+        # Files written before accounts had a kind: a known bank account's own, else chequing.
+        written = a.get("kind")
+        kind = normalize_kind(written) if written else KNOWN_KINDS.get(account_id, "chequing")
+        if kind is None:
+            raise HouseholdConfigError(f"{where}: kind must be one of {', '.join(ACCOUNT_KINDS)}")
+        owner = a.get("owner") or SHARED
+        if owner not in names:
+            raise HouseholdConfigError(f"{where}: owner must be one of the purposes ({', '.join(names)})")
         accounts.append(AccountDef(
             id=account_id,
             institution=_text(a, "institution", where),
             name=_text(a, "name", where),
             currency=check_currency(a.get("currency") or currency, f"{where}.currency"),
             card_last4=last4,
+            kind=kind,
+            owner=owner,
         ))
     if len({a.id for a in accounts}) != len(accounts):
         raise HouseholdConfigError("account ids must be different")
@@ -215,8 +253,14 @@ def to_toml(household: Household) -> str:
                 f"name = {_toml_string(a.name)}"]
         if a.currency != household.currency:
             out.append(f"currency = {_toml_string(a.currency)}")
-        if a.card_last4:
-            out.append(f"card_last4 = {_toml_string(a.card_last4)}")
+        cards = a.cards
+        if len(cards) == 1:
+            out.append(f"card_last4 = {_toml_string(cards[0])}")
+        elif cards:
+            out.append(f"card_last4 = [{', '.join(_toml_string(c) for c in cards)}]")
+        out.append(f"kind = {_toml_string(a.kind)}")
+        if a.owner != SHARED:
+            out.append(f"owner = {_toml_string(a.owner)}")
     return "\n".join(out) + "\n"
 
 

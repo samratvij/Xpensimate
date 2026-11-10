@@ -149,3 +149,56 @@ def test_insurance_claim_offsets_the_full_charge(client, db):
     txn = body["transaction"]
     assert (txn["amount"], txn["merchant_raw"], txn["account_id"], txn["category"], txn["purpose"]) == (
         -190.0, "Manulife", "ws_cash", "Health & Fitness", "Alex")
+
+
+# Google Pay showed a Wealthsimple card with digits that are another bank's card's last four.
+WS_VIA_WALLET = ("LYFT   *TEMP AUTH HOLD", "$19.97 with Wealthsimple VIP ••2149")
+WS_OWN = ("LYFT   *TEMP AUTH HOLD 🚕", "You spent $19.97 with your credit card.")
+
+
+def test_wallet_reads_the_card_name():
+    alert = google_wallet.parse(*WS_VIA_WALLET)
+    assert (alert.card_name, alert.card_suffix, alert.account_id) == ("Wealthsimple VIP", "2149", "ws_credit")
+    assert google_wallet.parse("Corner Cafe", "$12.34 with Mastercard ••6775").card_name == "Mastercard"
+
+
+def test_wallet_card_name_beats_colliding_digits(client, db):
+    db.get(Account, "ctfs_triangle").card_last4 = "2149"
+    db.get(Account, "ws_credit").card_last4 = "5527"
+    db.commit()
+    body = send(client, *WS_VIA_WALLET, package=GPAY, key="g9", at="2026-11-07T01:06:07+00:00").json()
+    assert body["transaction"]["account_id"] == "ws_credit"
+
+
+def test_wealthsimple_card_in_wallet_is_one_purchase(client, db):
+    db.get(Account, "ctfs_triangle").card_last4 = "2149"
+    db.commit()
+    wallet = send(client, *WS_VIA_WALLET, package=GPAY, key="g10", at="2026-11-07T01:06:07+00:00").json()
+    own = send(client, *WS_OWN, key="w10", at="2026-11-07T01:06:48+00:00").json()
+    assert (wallet["status"], own["status"]) == ("created", "duplicate")
+    assert own["transaction"]["id"] == wallet["transaction"]["id"]
+    assert db.scalar(select(func.count()).select_from(Transaction)) == 1
+
+
+def test_wallet_on_the_wrong_account_is_still_one_purchase_and_takes_the_banks_account(client, db):
+    # Wallet names no bank, so its digits pick Triangle; Wealthsimple's own notice a minute later is the same charge.
+    db.get(Account, "ctfs_triangle").card_last4 = "2149"
+    db.commit()
+    wallet = send(client, "LYFT   *TEMP AUTH HOLD", "$18.94 with Visa ••2149", package=GPAY, key="g11",
+                  at="2026-11-07T04:45:47+00:00").json()
+    assert wallet["transaction"]["account_id"] == "ctfs_triangle"
+    own = send(client, "LYFT   *TEMP AUTH HOLD 🚕", "You spent $18.94 with your credit card.", key="w11",
+               at="2026-11-07T04:46:24+00:00").json()
+    assert own["status"] == "duplicate"
+    txn = db.get(Transaction, wallet["transaction"]["id"])
+    db.refresh(txn)
+    assert txn.account_id == "ws_credit"
+    assert db.scalar(select(func.count()).select_from(Transaction)) == 1
+
+
+def test_same_charge_on_two_cards_hours_apart_stays_two(client, db):
+    db.get(Account, "pc_mastercard").card_last4 = "6775"
+    db.commit()
+    a = send(client, "Corner Cafe", "$4.50 with Mastercard ••6775", package=GPAY, key="g12", at="2026-11-04T13:00:00+00:00").json()
+    b = send(client, "Wealthsimple", "You spent $4.50 at Corner Cafe", key="w12", at="2026-11-04T16:00:00+00:00").json()
+    assert (a["status"], b["status"]) == ("created", "created")

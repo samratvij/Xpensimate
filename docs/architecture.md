@@ -38,9 +38,13 @@ validated; a failure leaves the charge uncategorized rather than blocking ingest
 [local-models.md](local-models.md).
 
 ## Accounts and card digits
-Accounts are listed in `household.toml`. Every alert or notification goes to the account whose
-`card_last4` matches the card in the alert; when there are no digits (or two accounts share them), the
-bank parser's well-known account id is the fallback. A new card is a config change, not a code change.
+Accounts are listed in `household.toml`, each with a kind (chequing, credit card, savings, investment,
+retirement, loan or other asset; regional names like TFSA, 401(k) or ISA map onto these) and an owner (a
+person, or Shared). Every alert or notification goes to the account with a card whose last four digits match
+the alert; an account can list several cards (a shared credit card with one card each). When there are no
+digits (or two accounts share them), the bank parser's well-known account id is the fallback. When a wallet
+names the card's bank ("Wealthsimple VIP ••2149"), only that bank's accounts are considered, since a wallet
+may show its own token digits. A new card is a config change, not a code change.
 
 ## Alerts: Firebase push instead of a WebSocket
 An always-open WebSocket needs an Android foreground service (battery, a permanent notification, killed by
@@ -52,7 +56,8 @@ month: a warning at the threshold, then exceeded over the limit.
 - **Bank alert emails** (Tangerine, PC Financial, Canadian Tire, RBC): only subjects matching known
   transaction alerts are read; statements, offers and one-time codes are never stored.
 - **Phone notifications** (Wealthsimple, Google Wallet): captured raw on the phone and parsed on the server,
-  so parsing can improve without an app release. A purchase reported by two live feeds is stored once.
+  so parsing can improve without an app release. A purchase reported by two live feeds is stored once, even
+  when a wallet put it on the wrong account; the bank's own feed then corrects the account.
 - **Statement import** (CSV for Canadian Tire, PC Financial, Tangerine, Wealthsimple; PDF for RBC) confirms
   what the app has, adds what it missed, records card payments as not an expense, and lists app charges
   missing from the statement.

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from app.core.accounts import ACCOUNT_KINDS, KIND_LABELS
 from app.core.household import (
     KNOWN_ACCOUNTS,
     HouseholdConfigError,
@@ -56,7 +57,16 @@ class AccountIn(BaseModel):
     institution: str
     name: str
     currency: str | None = None  # the household's when not given
-    card_last4: str | None = Field(None, description="Last four digits of the card, which picks the account for an alert")
+    card_last4: str | list[str] | None = Field(
+        None, description="Last four digits of the card, which picks the account for an alert; several cards on one "
+                          "account as a list or comma-separated")
+    kind: str = "chequing"
+    owner: str = "Shared"
+
+
+class AccountKind(BaseModel):
+    id: str
+    label: str
 
 
 class HouseholdIn(BaseModel):
@@ -73,6 +83,8 @@ class HouseholdOut(HouseholdIn):
     known_accounts: list[AccountIn]
     # Purpose -> how many charges use it (a purpose in use can't be removed).
     purposes_in_use: dict[str, int]
+    # The kinds an account can be, for the wizard's picker.
+    account_kinds: list[AccountKind]
 
 
 def _usage(db: Session) -> dict[str, int]:
@@ -86,6 +98,7 @@ def _out(db: Session) -> HouseholdOut:
         setup_needed=saved is None,
         known_accounts=[AccountIn(**asdict(a)) for a in KNOWN_ACCOUNTS],
         purposes_in_use=_usage(db),
+        account_kinds=[AccountKind(id=k, label=KIND_LABELS[k]) for k in ACCOUNT_KINDS],
     )
 
 

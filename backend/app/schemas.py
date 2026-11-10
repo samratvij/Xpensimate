@@ -130,6 +130,8 @@ class AccountOut(BaseModel):
     institution: str
     account_name: str
     currency: str
+    kind: str = "chequing"
+    owner: str = "Shared"
 
 
 class TaxonomyOut(BaseModel):

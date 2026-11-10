@@ -39,6 +39,12 @@ def find_by_source_ref(db: Session, source: str, source_ref: str) -> Transaction
 LIVE_SOURCES = ("gmail_pubsub", "android_push")
 TWIN_WINDOW = timedelta(hours=36)
 TWIN_MERCHANT_SCORE = 0.5
+# Two feeds naming the same merchant and amount within minutes are one purchase even if they disagree on the
+# account: a wallet can show a token number that matches a different card (see parsers/google_wallet.py).
+CLOSE_TWIN_WINDOW = timedelta(minutes=15)
+CLOSE_TWIN_MERCHANT_SCORE = 0.8
+# Feeds that relay another bank's card; the bank's own feed knows the account better.
+WALLET_FEEDS = ("android_push:gpay",)
 
 
 def _feed(source: str, source_ref: str | None) -> str:
@@ -49,7 +55,8 @@ def _feed(source: str, source_ref: str | None) -> str:
 
 def find_twin(db: Session, new: NewTransaction) -> Transaction | None:
     """The same purchase already recorded by another live feed: same amount, close in time, same or unknown
-    account, and a similar merchant (or both on the same known account)."""
+    account, and a similar merchant (or both on the same known account). Within minutes and with a near-identical
+    merchant, a differing account doesn't rule it out."""
     if new.source not in LIVE_SOURCES:
         return None
     candidates = db.scalars(
@@ -64,10 +71,14 @@ def find_twin(db: Session, new: NewTransaction) -> Transaction | None:
     for txn in candidates:
         if _feed(txn.source, txn.source_ref) == _feed(new.source, new.source_ref):
             continue  # the same feed reporting twice means two genuine purchases, not a twin
+        similarity = merchant_score(new.merchant, txn.merchant_raw)
         if new.account_id and txn.account_id and new.account_id != txn.account_id:
+            close = abs(txn.timestamp - new.timestamp) <= CLOSE_TWIN_WINDOW
+            if close and similarity >= CLOSE_TWIN_MERCHANT_SCORE:
+                return txn
             continue
         same_account = new.account_id is not None and new.account_id == txn.account_id
-        if same_account or merchant_score(new.merchant, txn.merchant_raw) >= TWIN_MERCHANT_SCORE:
+        if same_account or similarity >= TWIN_MERCHANT_SCORE:
             return txn
     return None
 
@@ -77,6 +88,9 @@ def ingest_transaction(db: Session, new: NewTransaction, raw_payload: dict[str, 
     if new.source_ref and (existing := find_by_source_ref(db, new.source, new.source_ref)):
         return existing, False
     if twin := find_twin(db, new):
+        wallet_twin = _feed(twin.source, twin.source_ref) in WALLET_FEEDS
+        if new.account_id and new.account_id != twin.account_id and (wallet_twin or twin.account_id is None):
+            twin.account_id = new.account_id  # the bank's own feed knows which card it was
         db.add(RawIngestLog(source=new.source, payload={**raw_payload, "duplicate_of": str(twin.id)}))
         db.commit()
         return twin, False

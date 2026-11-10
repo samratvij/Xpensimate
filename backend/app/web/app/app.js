@@ -1002,8 +1002,17 @@ function householdDraft(h) {
     name: p.name, icon: p.icon, line: p.budget_line || "", transfer: p.transfer_budget_line || "",
     split: !!p.transfer_budget_line, guide: p.guide, original: { name: p.name, icon: p.icon }, custom: true,
   }));
-  const accounts = h.accounts.map(a => ({ ...a, card_last4: a.card_last4 || "", known: h.known_accounts.some(k => k.id === a.id) }));
-  return { description: h.setup_needed ? "" : h.description, currency: h.currency, originalCurrency: h.currency, people, accounts };
+  // An account's owner points at the person itself, so renaming them in the wizard keeps it.
+  const accounts = h.accounts.map(a => ({ ...a, card_last4: (a.card_last4 || "").split(",").join(", "),
+    ownerRef: people.find(p => p.name === a.owner) || null, known: h.known_accounts.some(k => k.id === a.id) }));
+  return { description: h.setup_needed ? "" : h.description, currency: h.currency, originalCurrency: h.currency,
+    sharedGuide: h.setup_needed ? null : h.purposes[0].guide, people, accounts };
+}
+
+/** "1234, 5678" as ["1234", "5678"]; null when empty. */
+function cardList(text) {
+  const cards = String(text || "").split(/[,\s]+/).filter(Boolean);
+  return cards.length ? cards : null;
 }
 
 function slug(text) {
@@ -1014,7 +1023,7 @@ function householdBody(d) {
   return {
     description: d.description.trim(),
     currency: d.currency,
-    purposes: [{ name: "Shared" }, ...d.people.map(p => {
+    purposes: [{ name: "Shared", guide: d.sharedGuide }, ...d.people.map(p => {
       const lines = p.custom ? { line: p.line, transfer: p.transfer } : defaultLines(p);
       const same = p.original && p.original.name === p.name.trim() && p.original.icon === p.icon;
       return {
@@ -1026,7 +1035,9 @@ function householdBody(d) {
       id: a.id, institution: a.institution.trim(), name: a.name.trim(),
       // Your own accounts follow the household's currency unless they had one of their own.
       currency: a.known || (a.currency && a.currency !== d.originalCurrency) ? a.currency : null,
-      card_last4: a.card_last4.trim() || null,
+      card_last4: cardList(a.card_last4),
+      kind: a.kind || "chequing",
+      owner: a.ownerRef && d.people.includes(a.ownerRef) ? a.ownerRef.name.trim() : "Shared",
     })),
   };
 }
@@ -1075,7 +1086,13 @@ async function householdScreen(ctx) {
       <label class="field">Account<select data-a="known">${bankOptions(a)}</select></label>
       ${a.known ? "" : `<label class="field">Bank<input data-a="institution" value="${esc(a.institution)}" maxlength="64" placeholder="e.g. Scotiabank"></label>`}
       <label class="field">Name in the app<input data-a="name" value="${esc(a.name)}" maxlength="64"></label>
-      <div class="row"><label class="field grow">Card's last 4 digits<input data-a="card_last4" value="${esc(a.card_last4)}" inputmode="numeric" maxlength="4" placeholder="1234"></label>
+      <div class="row">
+        <label class="field grow">Type<select data-a="kind">${h.account_kinds.map(k =>
+          `<option value="${esc(k.id)}" ${(a.kind || "chequing") === k.id ? "selected" : ""}>${esc(k.label)}</option>`).join("")}</select></label>
+        <label class="field grow">Whose<select data-owner><option value="">Shared</option>${d.people.map((p, j) =>
+          `<option value="${j}" ${a.ownerRef === p ? "selected" : ""}>${esc(p.name.trim() || "(unnamed)")}</option>`).join("")}</select></label>
+      </div>
+      <div class="row"><label class="field grow">Last 4 digits of each card<input data-a="card_last4" value="${esc(a.card_last4)}" inputmode="numeric" maxlength="40" placeholder="1234, or 1234, 5678 for two cards"></label>
         <button class="btn text danger" data-remove-account="${i}" style="width:auto;align-self:flex-end;color:var(--critical)">Remove</button></div>
     </div>`).join("");
 
@@ -1089,7 +1106,8 @@ async function householdScreen(ctx) {
           <div class="grow"><b>${esc(p.name)}</b><div class="sub small muted">${!p.budget_line ? "Budgeted by category"
             : p.transfer_budget_line ? `Budgeted as ${esc(p.transfer_budget_line)} (money sent) and ${esc(p.budget_line)}` : `Budgeted as ${esc(p.budget_line)}`}</div></div></div>`).join("")}</div>
       <div><div class="small muted">Categories</div><div>${esc(d.categories.map(c => c.name.trim()).join(", "))}</div></div>
-      <div><div class="small muted">Accounts</div>${body.accounts.length ? body.accounts.map(a => `<div>${esc(a.name)}${a.card_last4 ? ` <span class="muted">•••• ${esc(a.card_last4)}</span>` : ""}</div>`).join("")
+      <div><div class="small muted">Accounts</div>${body.accounts.length ? body.accounts.map(a => `<div>${esc(a.name)}${a.card_last4 ? ` <span class="muted">${a.card_last4.map(c => `•••• ${esc(c)}`).join(", ")}</span>` : ""}
+        <span class="small muted">· ${esc(h.account_kinds.find(k => k.id === a.kind)?.label || a.kind)}${a.owner !== "Shared" ? `, ${esc(a.owner)}'s` : ""}</span></div>`).join("")
         : `<div class="muted">None yet: purchases still come in, without an account.</div>`}</div>
     </div>`;
   };
@@ -1147,7 +1165,7 @@ async function householdScreen(ctx) {
     }
     if (at === "Accounts") {
       if (d.accounts.some(a => !a.name.trim() || !a.institution.trim())) return "Every account needs a bank and a name.";
-      if (d.accounts.some(a => a.card_last4.trim() && !/^\d{4}$/.test(a.card_last4.trim()))) return "Card digits are the last 4 numbers on the card.";
+      if (d.accounts.some(a => (cardList(a.card_last4) || []).some(c => !/^\d{4}$/.test(c)))) return "Card digits are the last 4 numbers on each card, with a comma between cards.";
     }
     return "";
   };
@@ -1164,7 +1182,8 @@ async function householdScreen(ctx) {
     $("[data-add-account]", v)?.addEventListener("click", () => {
       const used = new Set(d.accounts.map(a => a.id));
       const k = h.known_accounts.find(k => !used.has(k.id));
-      d.accounts.push(k ? { ...k, card_last4: "", known: true } : { id: "", institution: "", name: "", currency: null, card_last4: "", known: false });
+      d.accounts.push(k ? { ...k, card_last4: "", ownerRef: null, known: true }
+        : { id: "", institution: "", name: "", currency: null, card_last4: "", kind: "credit_card", ownerRef: null, known: false });
       draw();
     });
     $$("[data-person]", v).forEach(card => {
@@ -1188,18 +1207,24 @@ async function householdScreen(ctx) {
       draw();
       $$("[data-cat]", ctx.view).at(-1).focus();
     });
-    $$("[data-remove-person]", v).forEach(b => b.onclick = () => { d.people.splice(+b.dataset.removePerson, 1); draw(); });
+    $$("[data-remove-person]", v).forEach(b => b.onclick = () => {
+      const [gone] = d.people.splice(+b.dataset.removePerson, 1);
+      d.accounts.forEach(a => { if (a.ownerRef === gone) a.ownerRef = null; });
+      draw();
+    });
     $$("[data-account]", v).forEach(card => {
       const a = d.accounts[+card.dataset.account];
       $$("[data-a]", card).forEach(input => input.addEventListener(input.tagName === "SELECT" ? "change" : "input", () => {
         if (input.dataset.a === "known") {
           const k = h.known_accounts.find(k => k.id === input.value);
-          Object.assign(a, k ? { ...k, card_last4: a.card_last4, known: true } : { id: "", institution: "", name: "", currency: null, known: false });
+          Object.assign(a, k ? { ...k, card_last4: a.card_last4, ownerRef: a.ownerRef, known: true }
+            : { id: "", institution: "", name: "", currency: null, known: false });
           draw();
           return;
         }
         a[input.dataset.a] = input.value;
       }));
+      $("[data-owner]", card).onchange = e => { a.ownerRef = e.target.value === "" ? null : d.people[+e.target.value]; };
     });
     $$("[data-remove-account]", v).forEach(b => b.onclick = () => { d.accounts.splice(+b.dataset.removeAccount, 1); draw(); });
     $("[data-save]", v)?.addEventListener("click", save);

@@ -17,6 +17,8 @@ class ParsedAlert:
     merchant: str
     account_id: str
     card_suffix: str | None = None
+    # The card as the alert names it ("Wealthsimple VIP"), for when the last four digits are not the card's own.
+    card_name: str | None = None
 
 
 def parse_amount(text: str) -> Decimal | None:

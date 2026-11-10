@@ -35,7 +35,7 @@ def receive_notification(body: PhoneNotificationIn, db: Session = Depends(get_db
             return PhoneNotificationOut(status="unparsed")
         return PhoneNotificationOut(status="ignored")
 
-    account_id = account_for_alert(db, parsed.card_suffix, parsed.account_id)
+    account_id = account_for_alert(db, parsed.card_suffix, parsed.account_id, parsed.card_name)
     ref = hashlib.sha1(f"{body.key}|{body.posted_at.isoformat()}".encode()).hexdigest()[:24]
     txn, created = ingest_transaction(
         db,

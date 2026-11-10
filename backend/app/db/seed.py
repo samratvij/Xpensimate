@@ -53,7 +53,7 @@ def sync_accounts(db: Session) -> None:
     digits, a rename) applied. Accounts removed from the file are kept, since charges point at them."""
     accounts = [
         {"id": a.id, "institution": a.institution, "account_name": a.name, "currency": a.currency,
-         "card_last4": a.card_last4}
+         "card_last4": a.card_last4, "kind": a.kind, "owner": a.owner}
         for a in load_household().accounts
     ]
     if accounts:
@@ -61,6 +61,7 @@ def sync_accounts(db: Session) -> None:
         db.execute(stmt.on_conflict_do_update(index_elements=["id"], set_={
             "institution": stmt.excluded.institution, "account_name": stmt.excluded.account_name,
             "currency": stmt.excluded.currency, "card_last4": stmt.excluded.card_last4,
+            "kind": stmt.excluded.kind, "owner": stmt.excluded.owner,
         }))
 
 
