@@ -41,6 +41,8 @@ def list_recurring(db: Session = Depends(get_db)) -> list[RecurringExpense]:
 def create_recurring(body: RecurringIn, db: Session = Depends(get_db)) -> RecurringExpense:
     require_category(db, body.category)
     item = RecurringExpense(**body.model_dump(), origin="user")
+    if not item.active:
+        item.deactivated_at = datetime.now(ZoneInfo(get_settings().timezone))
     db.add(item)
     db.flush()
     link_existing(db, item)
@@ -73,8 +75,11 @@ def expected(month: str | None = None, db: Session = Depends(get_db)) -> list[di
 def update_recurring(recurring_id: uuid.UUID, body: RecurringPatch, db: Session = Depends(get_db)) -> RecurringExpense:
     item = _get_or_404(db, recurring_id)
     require_category(db, body.category)
+    was_active = item.active
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(item, field, value)
+    if was_active and not item.active:
+        item.deactivated_at = datetime.now(ZoneInfo(get_settings().timezone))
     item.origin = "user"  # edited: detection leaves it alone from now on
     link_existing(db, item)
     db.commit()

@@ -82,6 +82,9 @@ interface Api {
     @POST("api/v1/recurring/{id}/paid")
     suspend fun markPaid(@Path("id") id: String, @Body body: MarkPaid): Transaction
 
+    @POST("api/v1/recurring")
+    suspend fun createRecurring(@Body body: Map<String, String>): Recurring
+
     // Budgets (keyed by budget line, e.g. "Grocery" or "Alex Personal")
 
     @GET("api/v1/budgets")
@@ -115,6 +118,12 @@ interface Api {
     @GET("api/v1/review")
     suspend fun review(@Query("month") month: String): MonthReview
 
+    @GET("api/v1/insights")
+    suspend fun insights(@Query("purpose") purpose: String? = null): List<Insight>
+
+    @POST("api/v1/insights/dismiss")
+    suspend fun dismissInsight(@Body body: DismissInsight): Response<Unit>
+
     // Wealthsimple capture
 
     @POST("api/v1/notifications")
@@ -124,7 +133,11 @@ interface Api {
 
     @Multipart
     @POST("api/v1/statements/preview")
-    suspend fun previewStatement(@Part file: MultipartBody.Part, @Part month: MultipartBody.Part? = null): StatementImport
+    suspend fun previewStatement(
+        @Part file: MultipartBody.Part,
+        @Part month: MultipartBody.Part? = null,
+        @Part accountId: MultipartBody.Part? = null,
+    ): StatementImport
 
     @GET("api/v1/statements/{id}")
     suspend fun statement(@Path("id") id: String): StatementImport

@@ -125,6 +125,7 @@ const state = {
   billsMonth: thisMonth(),
   // Month-end review defaults to the month that just ended.
   reviewMonth: shiftMonth(thisMonth(), -1),
+  insightsExpanded: false,
   tab: "home",
 };
 
@@ -242,10 +243,12 @@ function noteBox(container, value, onSave, { placeholder = NOTE_HINT } = {}) {
 async function homeScreen(ctx) {
   const m = state.homeMonth, who = state.purpose;
   const q = who ? `&purpose=${enc(who)}` : "";
-  const [summary, trend, tax] = await Promise.all([
+  const [summary, trend, tax, insights] = await Promise.all([
     api(`/summary?month=${m}${q}`),
     api(`/trends?months=${TREND_MONTHS}${q}`).catch(() => []),
     taxonomy(),
+    // Insights are about the current month only.
+    m === thisMonth() ? api(`/insights${who ? `?purpose=${enc(who)}` : ""}`).catch(() => []) : [],
   ]);
   if (!ctx.alive()) return;
 
@@ -314,10 +317,71 @@ async function homeScreen(ctx) {
       ${status}</a>`;
   }).join("") : `<p class="muted center">No spending this month yet.</p>`;
 
-  ctx.view.innerHTML = monthBar(m) + `<div class="stack">${hero}${trendCard}${chips}${lineCards}</div>`;
+  ctx.view.innerHTML = monthBar(m) + `<div class="stack">${insightsSection(insights)}${hero}${trendCard}${chips}${lineCards}</div>`;
   bindMonthBar(ctx.view, "homeMonth");
+  bindInsights(ctx.view, insights, m, who);
   $$("[data-month]", ctx.view).forEach(b => b.onclick = () => { state.homeMonth = b.dataset.month; route(); });
   $$("[data-who]", ctx.view).forEach(b => b.onclick = () => { state.purpose = b.dataset.who || null; route(); });
+}
+
+// ---------- Worth a look (same cards as Android) ----------
+const INSIGHTS_SHOWN = 3;
+const INSIGHT_ICONS = { alert: "⛔", warn: "⚠️", info: "💡" };
+
+/** What to do about this month, most pressing first. Nothing when the server has nothing to say. */
+function insightsSection(insights) {
+  if (!insights.length) return "";
+  const shown = state.insightsExpanded ? insights : insights.slice(0, INSIGHTS_SHOWN);
+  const more = insights.length - INSIGHTS_SHOWN;
+  return `<div class="insights"><div class="section-label" style="margin-top:0">Worth a look</div>
+    ${shown.map(i => `<div class="card insight ${esc(i.severity)}" data-insight="${esc(i.key)}" role="button" tabindex="0">
+      <span class="insight-icon" aria-label="${esc(i.severity)}">${INSIGHT_ICONS[i.severity] ?? INSIGHT_ICONS.info}</span>
+      <div class="grow"><div class="insight-title">${esc(i.title)}</div><div class="small muted">${esc(i.body)}</div>
+        ${i.action === "track_recurring" && i.recurring ? `<button class="link" data-track>Track as a bill</button>` : ""}
+        ${i.action === "remove_hold" && i.transaction_id ? `<button class="link" data-hold>Not a charge</button>` : ""}</div>
+      <button class="icon-btn insight-x" data-dismiss aria-label="Dismiss"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>`).join("")}
+    ${more > 0 ? `<button class="btn text" data-insights-more>${state.insightsExpanded ? "Show fewer" : `Show ${more} more`}</button>` : ""}
+  </div>`;
+}
+
+function bindInsights(view, insights, month, who) {
+  const byKey = new Map(insights.map(i => [i.key, i]));
+  const track = async i => {
+    try { const r = await api("/recurring", { method: "POST", body: i.recurring }); toast(`Added ${r.name} to Bills`); route(); }
+    catch (e) { toast(e.message); }
+  };
+  const open = i => {
+    if (i.action === "track_recurring") return track(i);
+    if (i.action === "open_line" && i.line) location.hash = `#/line/${enc(i.line)}/${month}${who ? `?purpose=${enc(who)}` : ""}`;
+    else if (i.action === "open_transaction" || i.action === "remove_hold") { if (i.transaction_id) location.hash = `#/txn/${i.transaction_id}`; }
+    else if (i.action === "open_bills") { state.billsMonth = month; location.hash = "#/bills"; }
+  };
+  $$("[data-insight]", view).forEach(card => {
+    const i = byKey.get(card.dataset.insight);
+    card.onclick = () => open(i);
+    card.onkeydown = e => { if (e.target === card && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); open(i); } };
+    $("[data-dismiss]", card).onclick = async e => {
+      e.stopPropagation();
+      card.remove();
+      try { await api("/insights/dismiss", { method: "POST", body: { key: i.key } }); route(); }
+      catch (err) { toast(err.message); route(); }
+    };
+    const trackBtn = $("[data-track]", card);
+    if (trackBtn) trackBtn.onclick = e => { e.stopPropagation(); track(i); };
+    const holdBtn = $("[data-hold]", card);
+    if (holdBtn) holdBtn.onclick = async e => {
+      e.stopPropagation();
+      card.remove();
+      try {
+        const t = await api(`/transactions/${i.transaction_id}`, { method: "PATCH", body: { excluded: true } });
+        toast(`Marked ${merchant(t)} ${money(t.amount)} as not a transaction`);
+      } catch (err) { toast(err.message); }
+      route();
+    };
+  });
+  const moreBtn = $("[data-insights-more]", view);
+  if (moreBtn) moreBtn.onclick = () => { state.insightsExpanded = !state.insightsExpanded; route(); };
 }
 
 async function lineScreen(ctx, line, m) {

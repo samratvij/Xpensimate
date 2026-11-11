@@ -61,6 +61,10 @@ month: a warning at the threshold, then exceeded over the limit.
 - **Statement import** (CSV for Canadian Tire, PC Financial, Tangerine, Wealthsimple; PDF for RBC) confirms
   what the app has, adds what it missed, records card payments as not an expense, and lists app charges
   missing from the statement.
+- **Screenshots of a bank app's transaction list**: read by the AI model (`SCREENSHOT_MODEL`), matched to an
+  account, and reconciled like a statement; pending rows are kept and flagged. A screenshot never counts as
+  covering a month, so a full statement later confirms its rows instead of adding them twice. Holds the bank
+  replaced (an order that changed) are offered for removal.
 - **Receipts**: a photo is read by Claude into line items, each with its own category and purpose, and
   matched to the card charge; the summary then counts each line under its own budget line.
 - **Past spending** (a CSV from a spreadsheet or another app): every row becomes a categorization example
@@ -71,6 +75,13 @@ month: a warning at the threshold, then exceeded over the limit.
 
 Bank support is Canadian today. Adding a bank is a parser module plus a test: see
 [../CONTRIBUTING.md](../CONTRIBUTING.md).
+
+## Worth a look
+Insight cards at the top of the Budget screen (both apps), most pressing first: a budget line on pace to go
+over, a spike against the usual month, a subscription still charging after it was stopped, a price change on
+a bill, something that looks like a new recurring charge (one tap tracks it as a bill), overdue and upcoming
+bills, and a likely leftover hold. Each can be dismissed. Amounts in text the server writes (these cards,
+push notifications) use the household's currency (`app/core/money.py`).
 
 ## Not an expense
 Card payments, payment reversals and transfers between your own accounts are kept as transactions (so

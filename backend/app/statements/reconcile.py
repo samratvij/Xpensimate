@@ -8,7 +8,10 @@ plan() compares each statement row with what the app already has for that accoun
   unclear     several app transactions fit equally well: the user picks one, adds it, or skips
   imported    already added by an earlier import of the same statement
   outside     not in the month being imported
-It also lists app transactions for the account in that period that are not on the statement.
+It also lists app transactions for the account in that period that are not on the statement. One with a
+charge from the same merchant on the statement a few days later was a hold the bank replaced with the final
+amount (an order that changed): it carries "replaced_by", and importing excludes it unless the user keeps it
+(see app/services/adjustments.py).
 
 apply_import() then does the work in the background, row by row, recording progress.
 """
@@ -17,13 +20,14 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import select, true
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.daemons.parsers.common import UNKNOWN_MERCHANT
 from app.db.base import SessionLocal
 from app.db.models import StatementImport, Transaction
+from app.services.adjustments import CENT, STATEMENT_MERCHANT_SCORE, STATEMENT_WINDOW_DAYS, same_merchant
 from app.services.ingest import NewTransaction, find_by_source_ref, ingest_transaction
 from app.services.reconciler import merchant_score
 from app.statements.parsers import PAYMENT, ParsedStatement, StatementRow, source_refs
@@ -31,12 +35,15 @@ from app.statements.parsers import PAYMENT, ParsedStatement, StatementRow, sourc
 log = logging.getLogger(__name__)
 
 STATEMENT = "statement"
+SCREENSHOT = "screenshot"  # rows read from a screenshot of the bank's app (app/statements/screenshot.py)
 # Bank alerts are timestamped when the email arrives; statements use the transaction date.
 DATE_WINDOW_DAYS = 3
 AMOUNT_TOLERANCE = Decimal("0.01")
 TIE_MERCHANT_MARGIN = 0.2
 # A bank-side debit that pays a card shows up as an alert with no merchant, or a transfer.
 PAYMENT_WORDS = ("PAYMENT", "TRANSFER", "PYMT")
+# Statement rows that can be the final charge of a hold: what's in the app once the import is done.
+REPLACING_ACTIONS = ("match", "add", "imported")
 # Times for statement rows without one: midday, so the local date never shifts.
 DEFAULT_TIME = time(12, 0)
 
@@ -61,11 +68,20 @@ def _window(row_day: date) -> tuple[datetime, datetime]:
     return start, end
 
 
-def _candidates(db: Session, account_id: str, row: StatementRow, claimed: set) -> list[tuple[Transaction, int, float]]:
-    """App transactions this row could be: same account (or unknown), same amount, close date."""
+def source_for(bank_format: str) -> str:
+    return SCREENSHOT if bank_format == SCREENSHOT else STATEMENT
+
+
+def _candidates(db: Session, account_id: str, row: StatementRow, claimed: set,
+                source: str) -> list[tuple[Transaction, int, float]]:
+    """App transactions this row could be: same account (or unknown), same amount, close date.
+
+    A statement doesn't match rows of earlier statements (those are found by their ref). A screenshot is
+    partial and often overlaps an earlier one or a statement, so anything already recorded can match it.
+    """
     query = select(Transaction).where(
         Transaction.excluded.is_(False),
-        Transaction.source != STATEMENT,
+        Transaction.source != STATEMENT if source == STATEMENT else true(),
         (Transaction.account_id == account_id) | Transaction.account_id.is_(None),
         Transaction.amount.between(row.amount - AMOUNT_TOLERANCE, row.amount + AMOUNT_TOLERANCE),
         Transaction.timestamp.between(*_window(row.spent_on)),
@@ -95,7 +111,34 @@ def _payment_pair(db: Session, account_id: str, row: StatementRow, claimed: set)
     return None
 
 
+def _replacements(missing: list[Transaction], planned: list[dict]) -> dict:
+    """Missing transaction id -> the statement row that replaced it: same merchant, a different amount, dated
+    up to a week later (the closest one). Each row replaces at most one charge."""
+    rows = [p for p in planned if p["action"] in REPLACING_ACTIONS and Decimal(p["amount"]) > 0]
+    earliest, latest = STATEMENT_WINDOW_DAYS
+    used: set = set()
+    found = {}
+    for txn in sorted(missing, key=lambda t: t.timestamp):
+        if txn.amount <= 0:
+            continue
+        day = _local_day(txn)
+        options = []
+        for row in rows:
+            gap = (date.fromisoformat(row["date"]) - day).days
+            if (row["index"] in used or not earliest <= gap <= latest
+                    or abs(Decimal(row["amount"]) - txn.amount) <= CENT
+                    or not same_merchant(row["merchant"], txn.merchant_raw, STATEMENT_MERCHANT_SCORE, brands=True)):
+                continue
+            options.append((abs(gap), row))
+        if options:
+            row = min(options, key=lambda o: o[0])[1]
+            used.add(row["index"])
+            found[txn.id] = {k: row[k] for k in ("index", "merchant", "amount", "date")}
+    return found
+
+
 def plan(db: Session, parsed: ParsedStatement, account_id: str, month: str | None) -> tuple[list[dict], list[dict], date | None, date | None]:
+    source = source_for(parsed.bank_format)
     refs = source_refs(account_id, parsed.rows)
     in_scope = [r for r in parsed.rows if month is None or r.spent_on.strftime("%Y-%m") == month]
     period_start = min((r.spent_on for r in in_scope), default=None)
@@ -107,12 +150,12 @@ def plan(db: Session, parsed: ParsedStatement, account_id: str, month: str | Non
         entry = {
             "index": row.index, "date": row.spent_on.isoformat(), "time": row.at.strftime("%H:%M") if row.at else None,
             "merchant": row.merchant, "amount": str(row.amount), "kind": row.kind,
-            "bank_category": row.bank_category, "source_ref": ref,
+            "bank_category": row.bank_category, "source_ref": ref, "pending": row.pending,
         }
         if month is not None and row.spent_on.strftime("%Y-%m") != month:
             planned.append({**entry, "action": "outside"})
             continue
-        if existing := find_by_source_ref(db, STATEMENT, ref):
+        if existing := find_by_source_ref(db, source, ref):
             claimed.add(existing.id)
             planned.append({**entry, "action": "imported", "transaction": _brief(existing)})
             continue
@@ -123,7 +166,7 @@ def plan(db: Session, parsed: ParsedStatement, account_id: str, month: str | Non
             planned.append({**entry, "action": "payment", "pays": _brief(pair) if pair else None})
             continue
 
-        candidates = _candidates(db, account_id, row, claimed)
+        candidates = _candidates(db, account_id, row, claimed, source)
         if not candidates:
             planned.append({**entry, "action": "add"})
             continue
@@ -137,7 +180,8 @@ def plan(db: Session, parsed: ParsedStatement, account_id: str, month: str | Non
         planned.append({**entry, "action": "match", "transaction": _brief(best)})
 
     missing = []
-    if period_start and period_end:
+    # A screenshot is often filtered or cut off, so what it doesn't show says nothing.
+    if period_start and period_end and source == STATEMENT:
         tz = _tz()
         query = select(Transaction).where(
             Transaction.account_id == account_id,
@@ -146,7 +190,9 @@ def plan(db: Session, parsed: ParsedStatement, account_id: str, month: str | Non
             Transaction.timestamp >= datetime.combine(period_start, time.min, tzinfo=tz),
             Transaction.timestamp < datetime.combine(period_end + timedelta(days=1), time.min, tzinfo=tz),
         )
-        missing = [_brief(t) for t in db.scalars(query.order_by(Transaction.timestamp)) if t.id not in claimed]
+        stray = [t for t in db.scalars(query.order_by(Transaction.timestamp)) if t.id not in claimed]
+        replaced = _replacements(stray, planned)
+        missing = [{**_brief(t), **({"replaced_by": replaced[t.id]} if t.id in replaced else {})} for t in stray]
     return planned, missing, period_start, period_end
 
 
@@ -166,7 +212,7 @@ def _add(db: Session, imp: StatementImport, row: dict, *, excluded: bool = False
     txn, _ = ingest_transaction(
         db,
         NewTransaction(
-            source=STATEMENT,
+            source=source_for(imp.bank_format),
             source_ref=row["source_ref"],
             account_id=imp.account_id,
             timestamp=_timestamp(row),
@@ -204,8 +250,22 @@ def apply_row(db: Session, imp: StatementImport, row: dict, decision: str | None
     return "skipped"
 
 
-def apply_import(import_id, decisions: dict[str, str]) -> None:
-    """Background task: apply every row, committing as it goes so progress is visible."""
+def exclude_replaced(db: Session, imp: StatementImport, decisions: dict[str, str], keep: set[str]) -> int:
+    """Exclude the holds the statement replaced, except those the user kept or whose final charge they skipped."""
+    count = 0
+    for entry in imp.missing:
+        final = entry.get("replaced_by")
+        if not final or entry["id"] in keep or decisions.get(str(final["index"])) == "skip":
+            continue
+        txn = db.get(Transaction, entry["id"])
+        if txn is not None and not txn.excluded:
+            txn.excluded = True
+            count += 1
+    return count
+
+
+def apply_import(import_id, decisions: dict[str, str], keep: set[str] = frozenset()) -> None:
+    """Background task: apply every row, committing as it goes so progress is visible, then drop replaced holds."""
     with SessionLocal() as db:
         imp = db.get(StatementImport, import_id)
         done: dict[str, int] = {}
@@ -215,6 +275,8 @@ def apply_import(import_id, decisions: dict[str, str]) -> None:
                 done[outcome] = done.get(outcome, 0) + 1
                 imp.processed = i + 1
                 db.commit()
+            if replaced := exclude_replaced(db, imp, decisions, keep):
+                done["replaced"] = replaced
             imp.status = "done"
             imp.result = done
         except Exception as e:  # noqa: BLE001 - recorded for the user, then re-raised to the log

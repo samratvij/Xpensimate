@@ -35,7 +35,7 @@
 <body>
 <main>
   <h1>Import a bank statement</h1>
-  <p class="muted">Adds only what the app is missing, confirms what it already has, and keeps card payments out of your spending. Nothing is saved until you press Import.</p>
+  <p class="muted">Upload a statement, or a screenshot of your bank app's transactions. Adds only what the app is missing, confirms what it already has, and keeps card payments out of your spending. Nothing is saved until you press Import.</p>
 
   <div class="card" id="token-card" hidden>
     <form class="row" id="token-form">
@@ -48,12 +48,12 @@
 
   <div class="card" id="upload-card" hidden>
     <form class="row" id="upload-form">
-      <label style="flex:1">Statement (CSV or RBC PDF) <input type="file" id="file" accept=".csv,text/csv,.pdf,application/pdf" required></label>
+      <label style="flex:1">Statement (CSV, RBC PDF) or screenshot <input type="file" id="file" accept=".csv,text/csv,.pdf,application/pdf,image/png,image/jpeg,image/webp" required></label>
       <label>Account <select id="account"><option value="">Detect from file</option></select></label>
       <label>Month (optional) <input type="month" id="month"></label>
       <button class="primary" id="preview-btn">Preview</button>
     </form>
-    <p class="muted" style="margin:8px 0 0">Canadian Tire, PC Financial, Tangerine and Wealthsimple CSV exports, and RBC PDF statements. <a href="#" id="forget">Forget token</a></p>
+    <p class="muted" style="margin:8px 0 0">Canadian Tire, PC Financial, Tangerine and Wealthsimple CSV exports, and RBC PDF statements. Screenshots of a bank app are read by the AI model; the month is ignored for them. <a href="#" id="forget">Forget token</a></p>
     <p class="err" id="upload-error"></p>
   </div>
 
@@ -102,13 +102,14 @@ $("upload-form").onsubmit = async e => {
 
 function table(rows, extra = () => "", extraHead = "") {
   return `<div class="scroll"><table><thead><tr><th>Date</th><th>Merchant</th><th>Bank category</th>${extraHead}<th class="amt">Amount</th></tr></thead><tbody>` +
-    rows.map(r => `<tr><td>${esc(r.date)}</td><td>${esc(r.merchant)}${r.kind === "refund" ? ' <span class="muted">(refund)</span>' : ""}${r.kind === "interest" ? ' <span class="muted">(interest)</span>' : ""}</td>` +
+    rows.map(r => `<tr><td>${esc(r.date)}</td><td>${esc(r.merchant)}${r.kind === "refund" ? ' <span class="muted">(refund)</span>' : ""}${r.kind === "interest" ? ' <span class="muted">(interest)</span>' : ""}${r.pending ? ' <span class="muted">(pending)</span>' : ""}</td>` +
       `<td class="muted">${esc(r.bank_category)}</td>${extra(r)}<td class="amt">${money(r.amount)}</td></tr>`).join("") + "</tbody></table></div>";
 }
 
 function render(p) {
   const by = a => p.rows.filter(r => r.action === a);
   const unclear = by("unclear");
+  const replaced = p.missing.filter(m => m.replaced_by), stray = p.missing.filter(m => !m.replaced_by);
   const section = $("preview");
   section.hidden = false;
   section.innerHTML = `
@@ -121,13 +122,18 @@ function render(p) {
           ${r.candidates.map(c => `<option value="match:${esc(c.id)}">Is ${esc(c.merchant)} on ${esc(c.date)} (${esc(c.source)})</option>`).join("")}
           <option value="add">Add as a new charge</option><option value="skip">Skip</option></select></td>`, "<th>Decision</th>")}` : ""}
     ${by("add").length ? `<h2>Missing from the app → will be added (${by("add").length})</h2>
-      <p class="muted">Categorized with your rules, your history, then Claude.</p>${table(by("add"))}` : ""}
+      <p class="muted">Categorized with your rules, your history, then the AI model.</p>${table(by("add"))}` : ""}
     ${by("payment").length ? `<h2>Card payments → recorded as not an expense (${by("payment").length})</h2>
       ${table(by("payment"), r => `<td class="muted">${r.pays ? `also excludes ${esc(r.pays.merchant)} ${esc(r.pays.date)} (${esc(r.pays.source)})` : ""}</td>`, "<th></th>")}` : ""}
-    ${p.missing.length ? `<h2 class="warn">In the app but not on this statement (${p.missing.length})</h2>
+    ${replaced.length ? `<h2>Replaced by the final charge → not an expense (${replaced.length})</h2>
+      <p class="muted">The order changed, so the bank dropped the first charge and charged the final amount. Tick any that were a separate purchase.</p>
+      <div class="scroll"><table><thead><tr><th>Date</th><th>Merchant</th><th>Replaced by</th><th class="amt">Amount</th><th>Keep it</th></tr></thead><tbody>
+      ${replaced.map(m => `<tr><td>${esc(m.date)}</td><td>${esc(m.merchant)}</td><td class="muted">${esc(m.replaced_by.date)} ${money(m.replaced_by.amount)}</td><td class="amt">${money(m.amount)}</td><td><input type="checkbox" class="keep" value="${esc(m.id)}"></td></tr>`).join("")}
+      </tbody></table></div>` : ""}
+    ${stray.length ? `<h2 class="warn">In the app but not on this statement (${stray.length})</h2>
       <p class="muted">Declined or reversed charges, duplicates, or ones on another card. Check them in the app.</p>
       <div class="scroll"><table><thead><tr><th>Date</th><th>Merchant</th><th>From</th><th class="amt">Amount</th></tr></thead><tbody>
-      ${p.missing.map(m => `<tr><td>${esc(m.date)}</td><td>${esc(m.merchant)}</td><td class="muted">${esc(m.source)}</td><td class="amt">${money(m.amount)}</td></tr>`).join("")}
+      ${stray.map(m => `<tr><td>${esc(m.date)}</td><td>${esc(m.merchant)}</td><td class="muted">${esc(m.source)}</td><td class="amt">${money(m.amount)}</td></tr>`).join("")}
       </tbody></table></div>` : ""}
     ${by("match").length ? `<details><summary>Already in the app (${by("match").length})</summary>
       ${table(by("match"), r => `<td class="muted">${esc(r.transaction.source)} ${esc(r.transaction.date)}</td>`, "<th>Seen as</th>")}</details>` : ""}
@@ -149,7 +155,8 @@ function render(p) {
     $("commit").disabled = true;
     try {
       await api(`/statements/${p.id}/commit`, { method: "POST", headers: { "Content-Type": "application/json" },
-                                                body: JSON.stringify({ decisions: decisions() }) });
+                                                body: JSON.stringify({ decisions: decisions(),
+                                                  keep: [...section.querySelectorAll(".keep:checked")].map(c => c.value) }) });
       poll(p.id, p.rows.length);
     } catch (err) { $("progress").innerHTML = `<p class="err">${esc(err.message)}</p>`; $("commit").disabled = false; }
   };
@@ -161,7 +168,7 @@ async function poll(id, total) {
   if (s.status === "importing") return setTimeout(() => poll(id, total), 1000);
   const r = s.result || {};
   $("progress").innerHTML = s.status === "done"
-    ? `<p><b>Done.</b> Added ${r.added ?? 0}, confirmed ${r.matched ?? 0}, card payments ${r.payment ?? 0}, skipped ${r.skipped ?? 0}.</p>`
+    ? `<p><b>Done.</b> Added ${r.added ?? 0}, confirmed ${r.matched ?? 0}, card payments ${r.payment ?? 0}, skipped ${r.skipped ?? 0}${r.replaced ? `, replaced charges removed ${r.replaced}` : ""}.</p>`
     : `<p class="err">The import stopped: ${esc(r.error ?? "unknown error")}. Rows before it were saved; importing the file again picks up the rest.</p>`;
 }
 start();

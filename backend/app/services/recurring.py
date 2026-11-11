@@ -243,7 +243,7 @@ def detect(db: Session, today: date) -> list[Detected]:
     found = []
     for key, raw_points in _history_points(db).items():
         by_day = {}
-        for day, amount, category, purpose in sorted(raw_points):
+        for day, amount, category, purpose in sorted(raw_points, key=lambda p: (p[0], p[1])):
             by_day[day] = (amount, category, purpose)  # one charge per day is enough to see a rhythm
         days = sorted(by_day)
         if len(days) < MIN_OCCURRENCES:

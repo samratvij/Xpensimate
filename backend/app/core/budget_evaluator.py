@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.money import money
 from app.core.config import get_settings
 from app.core.taxonomy import budget_line
 from app.db.models import BudgetAlert, BudgetEnvelope, Transaction
@@ -95,9 +96,9 @@ def describe(alert: BudgetAlert, trigger: Transaction | None) -> tuple[str, str]
     else:
         percent = round(alert.spent / alert.monthly_limit * 100)
         title = f"{alert.budget_line} at {percent}% of budget"
-    body = f"${alert.spent:,.2f} of ${alert.monthly_limit:,.2f} spent in {month_name}"
+    body = f"{money(alert.spent)} of {money(alert.monthly_limit)} spent in {month_name}"
     if trigger is not None:
-        body += f" · {merchant_key(trigger.merchant_raw)} ${trigger.amount:,.2f}"
+        body += f" · {merchant_key(trigger.merchant_raw)} {money(trigger.amount)}"
     return title, body
 
 

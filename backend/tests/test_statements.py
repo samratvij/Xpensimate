@@ -214,3 +214,147 @@ def test_payment_reversal_is_not_spending(client, db):
     db.expire_all()
     stored = db.scalar(select(Transaction).where(Transaction.merchant_raw == "Pre-Auth Payment Reversal"))
     assert (stored.excluded, stored.categorized_by, stored.category) == (True, "statement", "Uncategorized")
+
+
+# Screenshots of the bank app
+
+def _png() -> bytes:
+    import io
+
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGB", (40, 80), "white").save(out, format="PNG")
+    return out.getvalue()
+
+
+@pytest.fixture
+def screenshot(monkeypatch):
+    """Upload a screenshot whose reading is `read` (account_id and rows as the model would return them)."""
+    from app.core.config import get_settings
+    from app.statements import screenshot as module
+
+    def upload(client, guess, rows, is_list=True, **form):
+        monkeypatch.setattr(get_settings(), "anthropic_api_key", "test-key")
+        seen = {}
+
+        def fake(jpeg, accounts, today):
+            seen["accounts"] = [a.id for a in accounts]
+            return module.ScreenshotRead(is_transaction_list=is_list, account_id=guess,
+                                         rows=[module.ScreenshotRow(**r) for r in rows])
+
+        monkeypatch.setattr(module, "read_screenshot", fake)
+        resp = client.post("/api/v1/statements/preview", files={"file": ("shot.png", _png(), "image/png")}, data=form)
+        # Categorizing what gets added stays offline.
+        monkeypatch.setattr(get_settings(), "anthropic_api_key", "")
+        return resp
+
+    return upload
+
+
+def _row(date, merchant, amount, kind="purchase", pending=False):
+    return {"date": date, "merchant": merchant, "amount": amount, "kind": kind, "pending": pending}
+
+
+def test_screenshot_is_read_and_added_under_its_own_source(client, db, screenshot):
+    alert = add_alert(db, "WESTSIDE MUAY THAI", "98.60", "2026-11-04", "ws_credit")
+    resp = screenshot(client, "ws_credit", [
+        _row("2026-11-04", "Westside Muay Thai", 98.60),
+        _row("2026-11-03", "#32-153 Nepean Library", 2.78),
+        _row("2026-11-05", "Shell Ep On C81503", 40.00, pending=True),
+        _row("2026-10-30", "Payment", 500, kind="payment"),
+    ], month="2026-09")  # the month is ignored for screenshots
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert (body["bank_format"], body["account_id"], body["missing"]) == ("screenshot", "ws_credit", [])
+    rows = by_merchant(body)
+    assert rows["Westside Muay Thai"]["action"] == "match" and rows["Westside Muay Thai"]["transaction"]["id"] == str(alert.id)
+    assert (rows["#32-153 Nepean Library"]["action"], rows["#32-153 Nepean Library"]["amount"]) == ("add", "2.78")
+    assert (rows["Payment"]["action"], rows["Payment"]["amount"]) == ("payment", "-500.00")
+    assert (rows["Shell Ep On C81503"]["action"], rows["Shell Ep On C81503"]["pending"]) == ("add", True)
+
+    client.post(f"/api/v1/statements/{body['id']}/commit", json={})
+    db.expire_all()
+    added = db.scalar(select(Transaction).where(Transaction.merchant_raw == "#32-153 Nepean Library"))
+    assert (added.source, added.account_id) == ("screenshot", "ws_credit")
+    # A screenshot doesn't mark the month as covered by a statement.
+    assert client.get("/api/v1/statements").json()[0]["bank_format"] == "screenshot"
+
+
+def test_overlapping_screenshot_and_later_statement_add_nothing_twice(client, db, screenshot):
+    first = screenshot(client, "ws_credit", [_row("2026-10-27", "Corner Creamery", 9.29)]).json()
+    client.post(f"/api/v1/statements/{first['id']}/commit", json={})
+    # Read again, transcribed a little differently: still the same charge.
+    again = screenshot(client, "ws_credit", [_row("2026-10-27", "Corner Creamery Toronto", 9.29)]).json()
+    assert by_merchant(again)["Corner Creamery Toronto"]["action"] == "match"
+    # The full statement later confirms it instead of adding it again.
+    statement = by_merchant(preview(client, csvs.WEALTHSIMPLE))
+    assert statement["Corner Creamery Toronto"]["action"] == "match"
+    assert statement["Corner Creamery Toronto"]["transaction"]["source"] == "screenshot"
+
+
+def test_screenshot_account_must_be_known(client, screenshot):
+    rows = [_row("2026-11-04", "WALMART.CA", 37.78)]
+    resp = screenshot(client, "unknown", rows)
+    assert resp.status_code == 422 and "Pick the account" in resp.json()["detail"]
+    assert screenshot(client, "unknown", rows, account_id="rbc_visa").json()["account_id"] == "rbc_visa"
+
+
+def test_screenshot_that_isnt_a_transaction_list_is_rejected(client, screenshot):
+    resp = screenshot(client, "unknown", [], is_list=False)
+    assert resp.status_code == 422 and "doesn't look like" in resp.json()["detail"]
+
+
+def test_screenshot_needs_the_api_key(client):
+    resp = client.post("/api/v1/statements/preview", files={"file": ("shot.png", _png(), "image/png")})
+    assert resp.status_code == 503
+
+
+# --- holds the bank replaced (an order that changed) ------------------------------------------------
+
+def test_a_hold_replaced_by_the_final_charge_is_excluded_on_import(client, db):
+    # DoorDash fixed a botched order: alerts for $25 and then $10.42; the statement has only the $10.42.
+    hold = add_alert(db, "DoorDash", "25.00", "2026-10-23", "tangerine_mastercard", hour=18)
+    final = add_alert(db, "DoorDash", "10.42", "2026-10-23", "tangerine_mastercard", source="android_push", hour=20)
+    text = csvs.TANGERINE + "10/23/2026,DEBIT,DOORDASH*MCDONALDS TORONTO ON,,-10.42\n"
+
+    body = preview(client, text)
+    missing = {m["id"]: m for m in body["missing"]}
+    assert missing[str(hold.id)]["replaced_by"]["amount"] == "10.42"
+    assert by_merchant(body)["DOORDASH*MCDONALDS TORONTO ON"]["transaction"]["id"] == str(final.id)
+
+    client.post(f"/api/v1/statements/{body['id']}/commit", json={})
+    assert client.get(f"/api/v1/statements/{body['id']}").json()["result"]["replaced"] == 1
+    db.expire_all()
+    assert db.get(Transaction, hold.id).excluded is True
+    assert db.get(Transaction, final.id).excluded is False
+
+
+def test_a_replaced_hold_can_be_kept_and_needs_a_later_charge(client, db):
+    # Walmart: order changed after it was placed; the final charge came two days later with no alert.
+    hold = add_alert(db, "WALMART.CA", "100.00", "2026-10-20", "tangerine_mastercard")
+    earlier = add_alert(db, "WALMART.CA", "40.00", "2026-10-26", "tangerine_mastercard")  # after the statement's charge
+    other = add_alert(db, "SPORT CHEK", "60.00", "2026-10-21", "tangerine_mastercard")
+    text = csvs.TANGERINE + "10/22/2026,DEBIT,WAL-MART #1061 OTTAWA ON,,-75.12\n"
+
+    body = preview(client, text)
+    missing = {m["id"]: m for m in body["missing"]}
+    assert missing[str(hold.id)]["replaced_by"]["merchant"] == "WAL-MART #1061 OTTAWA ON"
+    assert "replaced_by" not in missing[str(other.id)]
+    assert str(earlier.id) not in missing  # outside the statement's period
+
+    assert client.post(f"/api/v1/statements/{body['id']}/commit", json={"keep": [str(other.id)]}).status_code == 422
+    client.post(f"/api/v1/statements/{body['id']}/commit", json={"keep": [str(hold.id)]})
+    db.expire_all()
+    assert db.get(Transaction, hold.id).excluded is False
+    assert "replaced" not in client.get(f"/api/v1/statements/{body['id']}").json()["result"]
+
+
+def test_skipping_the_final_charge_keeps_the_hold(client, db):
+    hold = add_alert(db, "DoorDash", "25.00", "2026-10-23", "tangerine_mastercard")
+    body = preview(client, csvs.TANGERINE + "10/23/2026,DEBIT,DOORDASH TORONTO ON,,-10.42\n")
+    final = next(r for r in body["rows"] if r["merchant"].startswith("DOORDASH"))
+    assert final["action"] == "add"
+    client.post(f"/api/v1/statements/{body['id']}/commit", json={"decisions": {str(final["index"]): "skip"}})
+    db.expire_all()
+    assert db.get(Transaction, hold.id).excluded is False

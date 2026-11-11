@@ -363,6 +363,8 @@ class StatementPreviewOut(StatementImportOut):
 class StatementCommitIn(BaseModel):
     # Row index -> "add" | "skip" | "match:<transaction id>", for unclear rows or to override a plan.
     decisions: dict[str, str] = {}
+    # Ids of missing transactions with "replaced_by" that are real after all: left as they are.
+    keep: list[str] = []
 
 
 class PhoneNotificationIn(BaseModel):
@@ -422,6 +424,29 @@ class ReviewOut(BaseModel):
     accounts: list[AccountCoverage]
     top_merchants: list[MerchantTotal]
     unmatched_receipts: int
+
+
+class InsightOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    key: str
+    kind: str
+    severity: Literal["alert", "warn", "info"]
+    title: str
+    body: str
+    # Dollars per month at stake; what the cards are ranked by within a severity.
+    impact: Money
+    # What tapping the card does: open_line (line), open_transaction (transaction_id), open_bills,
+    # track_recurring (recurring: a RecurringIn body to POST to /recurring), remove_hold (transaction_id: offer to
+    # mark it not a transaction; tapping the card opens it).
+    action: Literal["open_line", "open_transaction", "open_bills", "track_recurring", "remove_hold"]
+    line: str | None = None
+    transaction_id: uuid.UUID | None = None
+    recurring: dict[str, Any] | None = None
+
+
+class DismissIn(BaseModel):
+    key: str = Field(min_length=1, max_length=255)
 
 
 class MeOut(BaseModel):

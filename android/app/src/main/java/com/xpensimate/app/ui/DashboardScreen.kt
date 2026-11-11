@@ -39,9 +39,12 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xpensimate.app.data.Api
+import com.xpensimate.app.data.DismissInsight
+import com.xpensimate.app.data.Insight
 import com.xpensimate.app.data.LineSpend
 import com.xpensimate.app.data.MonthTotal
 import com.xpensimate.app.data.Summary
+import com.xpensimate.app.data.TransactionPatch
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import java.time.YearMonth
@@ -61,6 +64,10 @@ class DashboardViewModel(private val api: Api) : ViewModel() {
         private set
     var trend by mutableStateOf<List<MonthTotal>>(emptyList())
         private set
+    // Insights are about the current month only; empty while another month is shown.
+    var insights by mutableStateOf<List<Insight>>(emptyList())
+        private set
+    var message by mutableStateOf<String?>(null)
     var refreshing by mutableStateOf(false)
         private set
 
@@ -75,16 +82,60 @@ class DashboardViewModel(private val api: Api) : ViewModel() {
         viewModelScope.launch {
             if (pull) refreshing = true else if (summary !is Load.Ok) summary = Load.Loading
             val trendJob = async { runCatching { api.trends(TREND_MONTHS, purpose) }.getOrNull() }
+            val insightsJob = async {
+                if (month == YearMonth.now()) runCatching { api.insights(purpose) }.getOrNull() else emptyList()
+            }
             summary = runCatching { api.summary(month.toString(), purpose) }.fold({ Load.Ok(it) }, { Load.Failed(it.friendly()) })
             trendJob.await()?.let { trend = it }
+            insightsJob.await()?.let { insights = it }
             refreshing = false
+        }
+    }
+
+    fun dismiss(insight: Insight) {
+        insights = insights - insight
+        viewModelScope.launch {
+            runCatching { api.dismissInsight(DismissInsight(insight.key)) }.onFailure { message = it.friendly(); load() }
+        }
+    }
+
+    /** The first charge of an order that changed was only a hold: mark it not a transaction. */
+    fun removeHold(insight: Insight) {
+        val id = insight.transactionId ?: return
+        insights = insights - insight
+        viewModelScope.launch {
+            runCatching { api.updateTransaction(id, TransactionPatch(excluded = true)) }
+                .onSuccess { message = "Marked ${it.merchantNormalized ?: it.merchantRaw} ${it.amount.money()} as not a transaction"; load() }
+                .onFailure { message = it.friendly(); load() }
+        }
+    }
+
+    /** Add a repeating charge the server spotted as a bill, so it's expected (and watched) from now on. */
+    fun track(insight: Insight) {
+        val body = insight.recurring ?: return
+        viewModelScope.launch {
+            runCatching { api.createRecurring(body) }
+                .onSuccess { message = "Added ${it.name} to Bills"; load() }
+                .onFailure { message = it.friendly() }
         }
     }
 }
 
+/** Where an insight card leads. */
+class InsightNav(
+    val openLine: (String) -> Unit,
+    val openTransaction: (String) -> Unit,
+    val openBills: () -> Unit,
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DashboardScreen(vm: DashboardViewModel, onOpenLine: (line: String, month: YearMonth, purpose: String?) -> Unit) {
+fun DashboardScreen(
+    vm: DashboardViewModel,
+    onOpenTransaction: (String) -> Unit,
+    onOpenBills: () -> Unit,
+    onOpenLine: (line: String, month: YearMonth, purpose: String?) -> Unit,
+) {
     // Reload when coming back from an edit screen (budgets, a transaction), keeping what's shown meanwhile.
     LaunchedEffect(Unit) { vm.load() }
     Column(Modifier.fillMaxSize()) {
@@ -93,14 +144,15 @@ fun DashboardScreen(vm: DashboardViewModel, onOpenLine: (line: String, month: Ye
             Load.Loading -> LoadingView()
             is Load.Failed -> ErrorView(state.message) { vm.load() }
             is Load.Ok -> PullToRefreshBox(isRefreshing = vm.refreshing, onRefresh = { vm.load(pull = true) }) {
-                DashboardContent(vm, state.value) { onOpenLine(it, vm.month, vm.purpose) }
+                val openLine = { line: String -> onOpenLine(line, vm.month, vm.purpose) }
+                DashboardContent(vm, state.value, InsightNav(openLine, onOpenTransaction, onOpenBills), openLine)
             }
         }
     }
 }
 
 @Composable
-private fun DashboardContent(vm: DashboardViewModel, summary: Summary, onOpenLine: (String) -> Unit) {
+private fun DashboardContent(vm: DashboardViewModel, summary: Summary, nav: InsightNav, onOpenLine: (String) -> Unit) {
     // Budgeted lines first (closest to their limit on top), then everything else by size.
     val lines = summary.categories.sortedWith(
         compareByDescending<LineSpend> { it.monthlyLimit != null }
@@ -109,6 +161,24 @@ private fun DashboardContent(vm: DashboardViewModel, summary: Summary, onOpenLin
     )
     val previous = vm.trend.firstOrNull { YearMonth.parse(it.month) == vm.month.minusMonths(1) }?.spent
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        vm.message?.let { text ->
+            item { Text(text, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 4.dp)) }
+        }
+        if (vm.insights.isNotEmpty()) item(key = "insights") {
+            InsightsSection(
+                vm.insights,
+                onOpen = { insight ->
+                    when (insight.action) {
+                        "open_line" -> insight.line?.let(nav.openLine)
+                        "open_transaction", "remove_hold" -> insight.transactionId?.let(nav.openTransaction)
+                        "open_bills" -> nav.openBills()
+                    }
+                },
+                onTrack = vm::track,
+                onRemoveHold = vm::removeHold,
+                onDismiss = vm::dismiss,
+            )
+        }
         item { HeroCard(summary, vm.month, previous) }
         if (vm.trend.isNotEmpty()) item {
             Card(Modifier.fillMaxWidth()) {

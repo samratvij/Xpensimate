@@ -307,7 +307,19 @@ class RecurringExpense(Base):
     # A known due date; the schedule repeats from it (monthly keeps its day of month).
     anchor_date: Mapped[date] = mapped_column(Date)
     active: Mapped[bool] = mapped_column(Boolean, server_default="true")
+    # When it was last switched off; a charge after this means it didn't really stop.
+    deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     origin: Mapped[str] = mapped_column(String(16), server_default="user")  # detected | user
+    created_at: Mapped[datetime] = _created_at()
+
+
+class InsightDismissal(Base):
+    """An insight card someone swiped away; its key says how long that lasts (see app/services/insights.py)."""
+
+    __tablename__ = "insight_dismissals"
+
+    key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    dismissed_by: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[datetime] = _created_at()
 
 

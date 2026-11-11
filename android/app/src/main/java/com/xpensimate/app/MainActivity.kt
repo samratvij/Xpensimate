@@ -231,7 +231,17 @@ private fun MainScaffold(
     ) { padding ->
         NavHost(nav, startDestination = Tab.Dashboard.route, modifier = Modifier.padding(padding)) {
             composable(Tab.Dashboard.route) {
-                DashboardScreen(rememberViewModel { DashboardViewModel(api) }) { line, month, purpose ->
+                DashboardScreen(
+                    rememberViewModel { DashboardViewModel(api) },
+                    onOpenTransaction = { id -> nav.navigate("transaction/$id") },
+                    onOpenBills = {
+                        nav.navigate(Tab.Bills.route) {
+                            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                ) { line, month, purpose ->
                     nav.navigate("line/${Uri.encode(line)}/$month?purpose=${Uri.encode(purpose ?: "")}")
                 }
             }

@@ -26,6 +26,7 @@ class StatementRow:
     at: time | None = None
     bank_category: str | None = None
     ref: str | None = None  # the bank's own transaction id, when the export has one
+    pending: bool = False  # screenshots: not yet posted by the bank
 
 
 @dataclass

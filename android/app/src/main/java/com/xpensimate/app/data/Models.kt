@@ -216,7 +216,18 @@ data class BudgetUpdate(
 )
 
 @Serializable
-data class TxnBrief(val id: String, val merchant: String, val amount: String, val date: String, val source: String)
+data class TxnBrief(
+    val id: String,
+    val merchant: String,
+    val amount: String,
+    val date: String,
+    val source: String,
+    /** Statement "missing" only: the statement charge that replaced this one (a hold for an order that changed). */
+    @SerialName("replaced_by") val replacedBy: ReplacedBy? = null,
+)
+
+@Serializable
+data class ReplacedBy(val index: Int, val merchant: String, val amount: String, val date: String)
 
 @Serializable
 data class StatementLine(
@@ -230,6 +241,8 @@ data class StatementLine(
     val transaction: TxnBrief? = null,
     val pays: TxnBrief? = null,
     val candidates: List<TxnBrief> = emptyList(),
+    /** Screenshots only: not yet posted by the bank. */
+    val pending: Boolean = false,
 )
 
 @Serializable
@@ -248,7 +261,11 @@ data class StatementImport(
 )
 
 @Serializable
-data class StatementCommit(val decisions: Map<String, String>)
+data class StatementCommit(
+    val decisions: Map<String, String>,
+    /** Replaced charges that were a separate purchase after all: left as they are. */
+    val keep: List<String> = emptyList(),
+)
 
 @Serializable
 data class PhoneNotification(
@@ -322,3 +339,22 @@ data class HealthCheck(val name: String, val status: String, val detail: String)
 
 @Serializable
 data class HealthReport(@SerialName("checked_at") val checkedAt: String, val checks: List<HealthCheck>)
+
+/** One card at the top of the Budget screen; see app/services/insights.py on the server for the kinds. */
+@Serializable
+data class Insight(
+    val key: String,
+    val kind: String,
+    val severity: String, // alert | warn | info
+    val title: String,
+    val body: String,
+    val impact: Double,
+    val action: String, // open_line | open_transaction | open_bills | track_recurring | remove_hold
+    val line: String? = null,
+    @SerialName("transaction_id") val transactionId: String? = null,
+    // For track_recurring: the body to POST to /recurring.
+    val recurring: Map<String, String>? = null,
+)
+
+@Serializable
+data class DismissInsight(val key: String)

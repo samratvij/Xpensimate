@@ -4,11 +4,11 @@ from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-# Provider -> (categorizer, receipt reader). A local receipt reader must understand images; one vision model
+# Provider -> (categorizer, receipt reader, bank screenshot reader). A local receipt reader must understand images; one vision model
 # can do both jobs, so a home server only has to hold one.
 DEFAULT_MODELS = {
-    "anthropic": ("claude-haiku-5-5", "claude-sonnet-5-5"),
-    "openai": ("qwen2.5vl:7b", "qwen2.5vl:7b"),
+    "anthropic": ("claude-haiku-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"),
+    "openai": ("qwen2.5vl:7b", "qwen2.5vl:7b", "qwen2.5vl:7b"),
 }
 
 
@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     # Empty means the provider's default (DEFAULT_MODELS).
     categorizer_model: str = ""
     receipt_model: str = ""
+    # Reads screenshots of a bank app's transaction list: clean, printed text, so a small model does it.
+    screenshot_model: str = ""
 
     def ai_enabled(self) -> bool:
         """Claude needs a key; an OpenAI-compatible server only an address."""
@@ -45,6 +47,9 @@ class Settings(BaseSettings):
 
     def receipt_reader(self) -> str:
         return self.receipt_model or DEFAULT_MODELS[self.llm_provider][1]
+
+    def screenshot_reader(self) -> str:
+        return self.screenshot_model or DEFAULT_MODELS[self.llm_provider][2]
 
     receipts_dir: str = "/app/data/receipts"
     # Firebase service account (docs/firebase-setup.md); push is off when the file is missing.

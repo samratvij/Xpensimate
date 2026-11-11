@@ -178,3 +178,15 @@ select.input, label.field > select { background-image: linear-gradient(45deg, tr
 .list .note-line { white-space: nowrap; }
 textarea.note-input { resize: none; min-height: 64px; font: inherit; line-height: 1.35; }
 .note-actions { margin-top: 6px; }
+
+/* Worth a look */
+.insights { display: flex; flex-direction: column; gap: 8px; }
+.insight { display: flex; align-items: flex-start; gap: 12px; padding: 12px 4px 12px 16px; cursor: pointer; border-left: 4px solid var(--accent); }
+.insight.warn { border-left-color: var(--warning); }
+.insight.alert { border-left-color: var(--critical); }
+.insight-icon { font-size: 18px; line-height: 22px; flex: none; }
+.insight-title { font-weight: 600; font-size: 15px; margin-bottom: 2px; }
+.insight .link { font-size: 14px; padding: 6px 0 0; }
+.insight-x { padding: 6px; color: var(--muted); }
+.insight-x svg { width: 18px; height: 18px; }
+.insights .btn.text { padding: 4px; }

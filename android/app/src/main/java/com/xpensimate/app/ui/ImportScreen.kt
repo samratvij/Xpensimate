@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -20,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -28,7 +30,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -39,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.xpensimate.app.data.Account
 import com.xpensimate.app.data.Api
 import com.xpensimate.app.data.StatementCommit
 import com.xpensimate.app.data.StatementImport
@@ -58,6 +63,10 @@ import java.time.YearMonth
 class ImportViewModel(private val api: Api) : ViewModel() {
     /** null = the whole file. */
     var month by mutableStateOf<YearMonth?>(YearMonth.now().minusMonths(1))
+    /** null = detect it from the file or screenshot. */
+    var account by mutableStateOf<String?>(null)
+    var accounts by mutableStateOf<List<Account>>(emptyList())
+        private set
     var preview by mutableStateOf<StatementImport?>(null)
         private set
     var busy by mutableStateOf(false)
@@ -66,16 +75,29 @@ class ImportViewModel(private val api: Api) : ViewModel() {
         private set
     /** Row index -> "add" | "skip" | "match:<id>" for unclear rows. */
     val decisions = mutableStateMapOf<String, String>()
+    /** Ids of replaced charges to keep (a separate purchase after all). */
+    val keep = mutableStateListOf<String>()
+
+    fun loadAccounts() {
+        if (accounts.isNotEmpty()) return
+        viewModelScope.launch { runCatching { api.accounts() }.onSuccess { accounts = it } }
+    }
 
     fun load(context: Context, uri: Uri) {
         viewModelScope.launch {
             busy = true
             error = null
             decisions.clear()
+            keep.clear()
             runCatching {
                 val (name, bytes) = withContext(Dispatchers.IO) { readFile(context, uri) }
-                val file = MultipartBody.Part.createFormData("file", name, bytes.toRequestBody("text/csv".toMediaType()))
-                api.previewStatement(file, month?.let { MultipartBody.Part.createFormData("month", it.toString()) })
+                val type = context.contentResolver.getType(uri) ?: "application/octet-stream"
+                val file = MultipartBody.Part.createFormData("file", name, bytes.toRequestBody(type.toMediaType()))
+                api.previewStatement(
+                    file,
+                    month?.let { MultipartBody.Part.createFormData("month", it.toString()) },
+                    account?.let { MultipartBody.Part.createFormData("account_id", it) },
+                )
             }.onSuccess { preview = it }.onFailure { error = it.friendly() }
             busy = false
         }
@@ -87,7 +109,7 @@ class ImportViewModel(private val api: Api) : ViewModel() {
             busy = true
             error = null
             runCatching {
-                var state = api.commitStatement(current.id, StatementCommit(decisions.toMap()))
+                var state = api.commitStatement(current.id, StatementCommit(decisions.toMap(), keep.toList()))
                 while (state.status == "importing") {
                     preview = current.copy(status = state.status, processed = state.processed)
                     delay(1000)
@@ -99,7 +121,7 @@ class ImportViewModel(private val api: Api) : ViewModel() {
         }
     }
 
-    fun reset() { preview = null; error = null; decisions.clear() }
+    fun reset() { preview = null; error = null; decisions.clear(); keep.clear() }
 }
 
 private fun readFile(context: Context, uri: Uri): Pair<String, ByteArray> {
@@ -125,14 +147,19 @@ fun ImportScreen(vm: ImportViewModel) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.load(context, uri)
     }
+    val screenshotPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) vm.load(context, uri)
+    }
     val preview = vm.preview
+    LaunchedEffect(Unit) { vm.loadAccounts() }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (preview == null) {
             item {
                 Text("Import a bank statement", style = MaterialTheme.typography.titleLarge)
                 Text("Adds only what the app is missing and keeps card payments out of your spending. " +
-                    "Canadian Tire, PC Financial, Tangerine and Wealthsimple CSV exports.",
+                    "Canadian Tire, PC Financial, Tangerine and Wealthsimple CSV exports, RBC PDF statements, " +
+                    "or a screenshot of your bank app's transactions.",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             item {
@@ -144,11 +171,26 @@ fun ImportScreen(vm: ImportViewModel) {
                     }
                     FilterChip(selected = vm.month == null, onClick = { vm.month = null }, label = { Text("Whole file") })
                 }
+                Text("Screenshots ignore the month: they show only a few days anyway.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            item {
+                Text("Which account?", style = MaterialTheme.typography.titleSmall)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = vm.account == null, onClick = { vm.account = null }, label = { Text("Detect") })
+                    vm.accounts.forEach { a ->
+                        FilterChip(selected = vm.account == a.id, onClick = { vm.account = a.id }, label = { Text(a.accountName) })
+                    }
+                }
             }
             item {
                 Button(onClick = { picker.launch(arrayOf("*/*")) }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (vm.busy) "Reading…" else "Choose CSV file")
+                    Text(if (vm.busy) "Reading…" else "Choose statement file")
                 }
+                OutlinedButton(
+                    onClick = { screenshotPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    enabled = !vm.busy, modifier = Modifier.fillMaxWidth(),
+                ) { Text("Choose screenshot") }
             }
             vm.error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
         } else {
@@ -165,6 +207,7 @@ private fun LazyListScope.previewItems(p: StatementImport, vm: ImportViewModel) 
                 Text("${p.accountId} · ${p.periodStart ?: "?"} to ${p.periodEnd ?: "?"}",
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 p.counts.forEach { (action, n) -> Text("${ACTION_TITLES[action] ?: action}: $n") }
+
             }
         }
     }
@@ -179,7 +222,8 @@ private fun LazyListScope.previewItems(p: StatementImport, vm: ImportViewModel) 
             val r = p.result.orEmpty().mapValues { it.value.jsonPrimitive.intOrNull }
             Text(
                 if (p.status == "done") "Done. Added ${r["added"] ?: 0}, confirmed ${r["matched"] ?: 0}, " +
-                    "card payments ${r["payment"] ?: 0}, skipped ${r["skipped"] ?: 0}."
+                    "card payments ${r["payment"] ?: 0}, skipped ${r["skipped"] ?: 0}" +
+                    (r["replaced"]?.let { ", replaced charges removed $it." } ?: ".")
                 else "The import stopped part way. Importing the file again picks up the rest.",
                 style = MaterialTheme.typography.titleSmall,
                 color = if (p.status == "done") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
@@ -194,9 +238,21 @@ private fun LazyListScope.previewItems(p: StatementImport, vm: ImportViewModel) 
             }
             section("add", p, "Categorized with your rules, your history, then the AI model.")
             section("payment", p, null)
-            if (p.missing.isNotEmpty()) {
-                item { SectionTitle("In the app but not on this statement (${p.missing.size})") }
-                items(p.missing, key = { "m${it.id}" }) { BriefRow(it) }
+            val (replaced, stray) = p.missing.partition { it.replacedBy != null }
+            if (replaced.isNotEmpty()) {
+                item {
+                    SectionTitle("Replaced by the final charge → not an expense (${replaced.size})")
+                    Text("The order changed, so the bank dropped the first charge and charged the final amount. " +
+                        "Tick any that were a separate purchase.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                items(replaced, key = { "r${it.id}" }) { t ->
+                    ReplacedRow(t, kept = t.id in vm.keep) { keep -> if (keep) vm.keep.add(t.id) else vm.keep.remove(t.id) }
+                }
+            }
+            if (stray.isNotEmpty()) {
+                item { SectionTitle("In the app but not on this statement (${stray.size})") }
+                items(stray, key = { "m${it.id}" }) { BriefRow(it) }
             }
             item {
                 val left = unclear.count { vm.decisions[it.index.toString()] == null }
@@ -232,7 +288,8 @@ private fun SectionTitle(text: String) =
 private fun LineRow(row: StatementLine) {
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Column(Modifier.weight(1f)) {
-            Text(row.merchant + when (row.kind) { "refund" -> " (refund)"; "interest" -> " (interest)"; else -> "" })
+            Text(row.merchant + when (row.kind) { "refund" -> " (refund)"; "interest" -> " (interest)"; else -> "" } +
+                if (row.pending) " (pending)" else "")
             Text(listOfNotNull(row.date, row.bankCategory, row.pays?.let { "also excludes ${it.merchant} ${it.date}" }).joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -249,6 +306,22 @@ private fun BriefRow(t: TxnBrief) {
             Text("${t.date} · ${t.source}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Text(t.amount.toDouble().money())
+    }
+    HorizontalDivider()
+}
+
+@Composable
+private fun ReplacedRow(t: TxnBrief, kept: Boolean, onKeep: (Boolean) -> Unit) {
+    val final = t.replacedBy ?: return
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(t.merchant)
+            Text("${t.date} · replaced by ${final.amount.toDouble().money()} on ${final.date}",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text(t.amount.toDouble().money())
+        Checkbox(checked = kept, onCheckedChange = onKeep)
+        Text("Keep", style = MaterialTheme.typography.bodySmall)
     }
     HorizontalDivider()
 }

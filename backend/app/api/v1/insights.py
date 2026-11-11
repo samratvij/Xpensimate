@@ -8,9 +8,11 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.security import require_token
 from app.db.base import get_db
 from app.db.models import Account, BudgetEnvelope, Receipt, StatementImport, Transaction
-from app.schemas import AccountCoverage, MerchantTotal, MonthTotal, ReviewLine, ReviewOut
+from app.schemas import AccountCoverage, DismissIn, InsightOut, MerchantTotal, MonthTotal, ReviewLine, ReviewOut
+from app.services import insights as insight_service
 from app.services.merchant import merchant_key
 from app.services.recurring import expected_spend
 from app.services.spending import month_bounds, spend_by
@@ -97,6 +99,7 @@ def review(month: str | None = None, db: Session = Depends(get_db)) -> ReviewOut
     imports = list(db.scalars(
         select(StatementImport).where(
             StatementImport.status == "done",
+            StatementImport.bank_format != "screenshot",  # a screenshot doesn't cover a whole month
             StatementImport.period_start <= end.date(),
             StatementImport.period_end >= start.date(),
         )
@@ -136,3 +139,15 @@ def review(month: str | None = None, db: Session = Depends(get_db)) -> ReviewOut
         top_merchants=[MerchantTotal(merchant=m, spent=v[0], count=v[1]) for m, v in top],
         unmatched_receipts=unmatched,
     )
+
+
+@router.get("/insights", response_model=list[InsightOut])
+def insights(purpose: str | None = None, db: Session = Depends(get_db)) -> list[insight_service.Insight]:
+    """What's worth acting on this month, most pressing first. The app shows the first few."""
+    tz = _tz()
+    return insight_service.insights(db, tz, datetime.now(tz).date(), purpose)
+
+
+@router.post("/insights/dismiss", status_code=status.HTTP_204_NO_CONTENT)
+def dismiss_insight(body: DismissIn, db: Session = Depends(get_db), user: str = Depends(require_token)) -> None:
+    insight_service.dismiss(db, body.key, user)
