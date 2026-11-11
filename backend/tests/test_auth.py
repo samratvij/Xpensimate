@@ -17,9 +17,11 @@ def test_api_rejects_wrong_token():
 
 
 def test_meta(client):
-    assert [a["id"] for a in client.get("/api/v1/accounts").json()] == [
-        "ctfs_triangle", "pc_mastercard", "pc_money", "rbc_sam", "rbc_visa", "tangerine_cheq", "tangerine_mastercard", "ws_cash", "ws_credit",
-    ]
+    accounts = {a["id"]: a for a in client.get("/api/v1/accounts").json()}
+    assert list(accounts) == sorted(accounts)
+    assert {"ctfs_triangle", "rbc_sam", "ws_cash", "rbc_sam_cheq", "pc_savings", "ws_fhsa", "parents_loan"} <= set(accounts)
+    assert (accounts["rbc_sam_cheq"]["owner"], accounts["rbc_sam_cheq"]["kind"]) == ("Sam", "chequing")
+    assert (accounts["ws_fhsa"]["owner"], accounts["ws_fhsa"]["kind"]) == ("Alex", "investment")
     taxonomy = client.get("/api/v1/taxonomy").json()
     assert "Grocery" in taxonomy["categories"]
     assert "Alex" in taxonomy["purposes"]

@@ -54,7 +54,12 @@ import com.xpensimate.app.data.QueueFlushWorker
 import com.xpensimate.app.data.ServerConfig
 import com.xpensimate.app.ui.AlertsScreen
 import com.xpensimate.app.ui.AppCurrency
+import com.xpensimate.app.data.HouseholdPeople
 import com.xpensimate.app.ui.AlertsViewModel
+import com.xpensimate.app.ui.BalancesScreen
+import com.xpensimate.app.ui.BalancesViewModel
+import com.xpensimate.app.ui.IncomeScreen
+import com.xpensimate.app.ui.IncomeViewModel
 import com.xpensimate.app.ui.BillsScreen
 import com.xpensimate.app.ui.BillsViewModel
 import com.xpensimate.app.ui.BudgetsScreen
@@ -69,6 +74,7 @@ import com.xpensimate.app.ui.ImportViewModel
 import com.xpensimate.app.ui.LineDetailScreen
 import com.xpensimate.app.ui.LineDetailViewModel
 import com.xpensimate.app.ui.LoadingView
+import com.xpensimate.app.ui.AccountNames
 import com.xpensimate.app.ui.PersonLines
 import com.xpensimate.app.ui.ReceiptDetailScreen
 import com.xpensimate.app.ui.ReceiptDetailViewModel
@@ -152,7 +158,9 @@ private fun MainScaffold(
         runCatching { api.taxonomy() }.onSuccess {
             PersonLines.kinds = it.personLines
             AppCurrency.code = it.currency
+            HouseholdPeople.names = it.people
         }
+        runCatching { api.accounts() }.onSuccess { list -> AccountNames.names = list.associate { it.id to it.accountName } }
         Push.register(app, api)
         // Send any Wealthsimple / Google Pay purchases captured while the server was unreachable; whatever
         // still can't be sent is left to the background retry.
@@ -178,6 +186,8 @@ private fun MainScaffold(
         route == "import" -> "Import statement"
         route == "review" -> "Month review"
         route == "categories" -> "Categories"
+        route?.startsWith("income/") == true -> "Income"
+        route?.startsWith("balances/") == true -> "Balances"
         route?.startsWith("line/") == true -> entry?.arguments?.getString("line")
         else -> null
     }
@@ -241,8 +251,21 @@ private fun MainScaffold(
                             restoreState = true
                         }
                     },
-                ) { line, month, purpose ->
-                    nav.navigate("line/${Uri.encode(line)}/$month?purpose=${Uri.encode(purpose ?: "")}")
+                    onOpenIncome = { month -> nav.navigate("income/$month") },
+                    onOpenBalances = { month -> nav.navigate("balances/$month") },
+                    onOpenLine = { line, month, purpose ->
+                        nav.navigate("line/${Uri.encode(line)}/$month?purpose=${Uri.encode(purpose ?: "")}")
+                    },
+                )
+            }
+            composable("balances/{month}") { backStack ->
+                val month = YearMonth.parse(backStack.arguments?.getString("month"))
+                BalancesScreen(rememberViewModel(key = "balances-$month") { BalancesViewModel(api, month) })
+            }
+            composable("income/{month}") { backStack ->
+                val month = YearMonth.parse(backStack.arguments?.getString("month"))
+                IncomeScreen(rememberViewModel(key = "income-$month") { IncomeViewModel(api, month) }) { id ->
+                    nav.navigate("transaction/$id")
                 }
             }
             composable("line/{line}/{month}?purpose={purpose}") { backStack ->

@@ -15,6 +15,7 @@ from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
 from app.db.models import Receipt, Transaction, TransactionItem
+from app.services.categories import categories_with
 from app.services.merchant import merchant_key
 
 MATCH_WINDOW = timedelta(hours=72)
@@ -45,14 +46,15 @@ def merchant_score(a: str, b: str) -> float:
     return SequenceMatcher(None, merchant_key(a).lower(), merchant_key(b).lower()).ratio()
 
 
-def is_dining(receipt: Receipt) -> bool:
+def is_dining(receipt: Receipt, tipped: set[str]) -> bool:
+    """Mostly a category that's tipped (restaurants): the card charge may be the receipt plus a tip."""
     totals: Counter = Counter()
     for item in receipt.items:
         totals[item.category] += abs(item.price)
-    return bool(totals) and totals.most_common(1)[0][0] == "Eating Out"
+    return bool(totals) and totals.most_common(1)[0][0] in tipped
 
 
-def score(receipt: Receipt, txn: Transaction) -> Candidate | None:
+def score(receipt: Receipt, txn: Transaction, tipped: set[str]) -> Candidate | None:
     if txn.amount <= 0 or receipt.total <= 0 or txn.excluded:
         return None
     hours = abs((txn.timestamp - receipt.timestamp).total_seconds()) / 3600
@@ -62,7 +64,7 @@ def score(receipt: Receipt, txn: Transaction) -> Candidate | None:
     similarity = merchant_score(receipt.merchant, txn.merchant_normalized or txn.merchant_raw)
     if abs(diff) <= AMOUNT_TOLERANCE:
         tip = False
-    elif AMOUNT_TOLERANCE < diff <= receipt.total * MAX_TIP_RATIO and is_dining(receipt):
+    elif AMOUNT_TOLERANCE < diff <= receipt.total * MAX_TIP_RATIO and is_dining(receipt, tipped):
         tip = True
     else:
         return None
@@ -78,7 +80,8 @@ def transaction_candidates(db: Session, receipt: Receipt) -> list[Candidate]:
     query = _unmatched_transactions().where(
         Transaction.timestamp.between(receipt.timestamp - MATCH_WINDOW, receipt.timestamp + MATCH_WINDOW)
     )
-    found = (score(receipt, txn) for txn in db.scalars(query))
+    tipped = set(categories_with(db, "tipped"))
+    found = (score(receipt, txn, tipped) for txn in db.scalars(query))
     return sorted((c for c in found if c), key=lambda c: c.sort_key)
 
 
@@ -87,7 +90,8 @@ def receipt_candidates(db: Session, txn: Transaction) -> list[Candidate]:
         Receipt.matched_transaction_id.is_(None),
         Receipt.timestamp.between(txn.timestamp - MATCH_WINDOW, txn.timestamp + MATCH_WINDOW),
     )
-    found = (score(receipt, txn) for receipt in db.scalars(query))
+    tipped = set(categories_with(db, "tipped"))
+    found = (score(receipt, txn, tipped) for receipt in db.scalars(query))
     return sorted((c for c in found if c), key=lambda c: c.sort_key)
 
 

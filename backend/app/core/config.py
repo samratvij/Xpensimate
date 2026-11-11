@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     pubsub_topic: str = "gmail-bank-alerts"
     pubsub_subscription: str = "bank-alerts-pull"
     gmail_secrets_dir: str = "/app/secrets"
+    # Whose Gmail it is (one of the household's people): a bank email that doesn't say who acted ("You made a
+    # transfer") is theirs, which picks between accounts that differ only by owner. Empty: unknown.
+    gmail_owner: str = ""
 
     def tokens(self) -> dict[str, str]:
         """Person -> token. Tokens must be long random strings (openssl rand -hex 32)."""

@@ -19,7 +19,10 @@ router = APIRouter(prefix="/statements", tags=["statements"])
 
 MAX_STATEMENT_BYTES = 5 * 1024 * 1024
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # phone screenshots, before they are scaled down
-DECISIONS = ("add", "skip")
+# "transfer": record it as not an expense (money moved between own accounts, or paid back to someone).
+DECISIONS = ("add", "skip", "transfer")
+# Rows the user has to decide before importing.
+TO_DECIDE = ("unclear", "deposit", "transfer")
 
 
 def _out(imp: StatementImport, model=StatementImportOut):
@@ -113,17 +116,23 @@ def commit_import(
         row = by_index.get(index)
         if row is None:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"No row {index}")
-        if decision in DECISIONS:
+        if decision in DECISIONS or (decision == "income" and row.get("kind") == "deposit"):
             continue
+        if decision.startswith("move:") and row["action"] in ("deposit", "transfer"):
+            target = decision[5:]
+            if target != imp.account_id and db.get(Account, target) is not None:
+                continue
         if decision.startswith("match:") and decision[6:] in {c["id"] for c in row.get("candidates", [])}:
             continue
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Row {index}: invalid decision {decision!r}")
     replaced = {m["id"] for m in imp.missing if m.get("replaced_by")}
     if unknown := set(body.keep) - replaced:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Not a replaced charge: {sorted(unknown)}")
-    undecided = [r["index"] for r in imp.rows if r["action"] == "unclear" and str(r["index"]) not in body.decisions]
+    undecided = [r["index"] for r in imp.rows
+                 if r["action"] in TO_DECIDE and not r.get("suggested") and str(r["index"]) not in body.decisions]
     if undecided:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Decide the unclear rows first: {undecided}")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            f"Decide the unclear rows, deposits and transfers first: {undecided}")
 
     imp.status = "importing"
     db.commit()

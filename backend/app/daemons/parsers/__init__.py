@@ -5,10 +5,10 @@ parse(subject, body) -> ParsedAlert | None. Only mail whose subject matches a kn
 template is parsed (and, if parsing fails, kept for inspection); everything else from the bank
 (statements, offers, one-time codes) is ignored and never stored.
 """
-from app.daemons.parsers import ctfs, pc_financial, rbc, tangerine
+from app.daemons.parsers import ctfs, pc_financial, rbc, tangerine, wealthsimple_email
 from app.daemons.parsers.common import ParsedAlert
 
-ISSUERS = (tangerine, pc_financial, ctfs, rbc)
+ISSUERS = (tangerine, pc_financial, ctfs, rbc, wealthsimple_email)
 
 
 def issuer_for_sender(sender: str):
@@ -22,8 +22,13 @@ def issuer_for_sender(sender: str):
 
 
 def gmail_query(newer_than: str = "1d") -> str:
-    domains = " OR ".join(d for issuer in ISSUERS for d in issuer.SENDER_DOMAINS)
-    return f"from:({domains}) newer_than:{newer_than}"
+    """Mail from the issuers' domains. An issuer that sends a lot of other mail (Wealthsimple) narrows its part with
+    GMAIL_FILTER, so a search-based catch-up doesn't fetch every message and run into Gmail's per-minute quota."""
+    plain = " OR ".join(d for i in ISSUERS if not getattr(i, "GMAIL_FILTER", None) for d in i.SENDER_DOMAINS)
+    parts = [f"from:({plain})"] + [
+        f"(from:({' OR '.join(i.SENDER_DOMAINS)}) {i.GMAIL_FILTER})" for i in ISSUERS if getattr(i, "GMAIL_FILTER", None)
+    ]
+    return f"{{{' '.join(parts)}}} newer_than:{newer_than}"
 
 
 __all__ = ["ISSUERS", "ParsedAlert", "gmail_query", "issuer_for_sender"]

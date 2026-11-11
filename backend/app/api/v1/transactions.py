@@ -22,6 +22,9 @@ from app.schemas import (
 from app.services.categorizer import apply_classification, categorize
 from app.services.categories import require_category
 from app.services.notes import clean_note
+from app.core.taxonomy import earners
+from app.services.income import INCOME, INCOME_CATEGORIES
+from app.services.savings import TRANSFER
 from app.services.ingest import NewTransaction, ingest_transaction
 from app.services.reconciler import summarize_labels, unmatch
 
@@ -161,16 +164,31 @@ def _remember(db: Session, txn: Transaction, purpose_set: bool) -> None:
     db.add(rule)
 
 
+def _check_income_patch(body: TransactionPatch) -> None:
+    """Income stays income: never counted as spending, filed as an income kind, earned by a person."""
+    if body.excluded is False:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Income isn't spending, so it can't be counted as an expense")
+    if body.category is not None and body.category not in INCOME_CATEGORIES:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Income is one of {', '.join(INCOME_CATEGORIES)}")
+    if body.purpose is not None and body.purpose not in earners():
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Income is earned by one of {', '.join(earners())}")
+    if body.remember:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Rules are for spending; edit the income source instead")
+
+
 @router.patch("/{txn_id}", response_model=TransactionDetail)
 def update_transaction(
     txn_id: uuid.UUID, body: TransactionPatch, db: Session = Depends(get_db), user: str = Depends(require_token)
 ) -> TransactionDetail:
     txn = _get_or_404(db, txn_id)
+    if txn.txn_type == INCOME:
+        _check_income_patch(body)
     if any(v is not None for v in (body.category, body.purpose, body.excluded, body.note)):
         txn.edited_by = user
     if body.note is not None:
         txn.note = clean_note(body.note)
-    require_category(db, body.category)
+    if txn.txn_type != INCOME:
+        require_category(db, body.category)
     if body.category is not None:
         txn.category = body.category
         txn.category_is_manual = True
@@ -179,6 +197,11 @@ def update_transaction(
         txn.purpose_is_manual = True
     if body.excluded is not None and body.excluded != txn.excluded:
         txn.excluded = body.excluded
+        if txn.txn_type == TRANSFER and not body.excluded:
+            # Not a move between own accounts after all: money that left this account is spending.
+            if txn.account_id is None:
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Money coming in can't be counted as an expense")
+            txn.txn_type, txn.counterpart_account_id = "PURCHASE", None
         # An excluded charge can't own a receipt; free it to match the right one.
         if body.excluded and (receipt := db.scalar(select(Receipt).where(Receipt.matched_transaction_id == txn.id))):
             unmatch(db, receipt)
@@ -187,7 +210,7 @@ def update_transaction(
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Pick a category before remembering it")
         _remember(db, txn, purpose_set=body.purpose is not None)
     db.commit()
-    if body.category is not None or body.purpose is not None or body.excluded is False:
+    if txn.txn_type != INCOME and (body.category is not None or body.purpose is not None or body.excluded is False):
         check_transaction(db, txn)
     return _detail(db, txn_id)
 
@@ -198,6 +221,8 @@ def split_transaction(
 ) -> TransactionDetail:
     """Split one charge into lines with their own what and who (e.g. an Amazon order); [] removes the split."""
     txn = _get_or_404(db, txn_id)
+    if txn.txn_type == INCOME:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Income can't be split")
     if _receipt_id(db, txn.id):
         raise HTTPException(
             status.HTTP_409_CONFLICT, "These lines come from a receipt: edit them there, or unmatch the receipt first"

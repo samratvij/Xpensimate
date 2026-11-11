@@ -84,6 +84,9 @@ def test_gmail_query_covers_all_issuers():
     query = gmail_query("1d")
     assert all(d in query for d in ("tangerine.ca", "pcfinancial.ca", "ctfs.com", "rbc.com"))
     assert query.endswith("newer_than:1d")
+    # Only Wealthsimple's pay mail is fetched, not every order and offer.
+    assert '(from:(wealthsimple.com) (subject:"Direct deposit received" OR subject:"made a transfer"))' in query
+    assert query.startswith("{from:(") and "wealthsimple.com OR" not in query
 
 
 def test_message_text_falls_back_to_html():

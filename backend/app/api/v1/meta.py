@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import require_token
 from app.core.household import load_household
-from app.core.taxonomy import person_lines, purposes
+from app.core.taxonomy import people, person_lines, purposes
 from app.services.categories import category_names, current_budget_lines
 from app.db.base import get_db
 from app.db.models import Account
@@ -21,7 +21,7 @@ def list_accounts(db: Session = Depends(get_db)) -> list[Account]:
 @router.get("/taxonomy", response_model=TaxonomyOut)
 def get_taxonomy(db: Session = Depends(get_db)) -> TaxonomyOut:
     return TaxonomyOut(categories=category_names(db), purposes=list(purposes()),
-                       budget_lines=list(current_budget_lines(db)), person_lines=person_lines(),
+                       budget_lines=list(current_budget_lines(db)), person_lines=person_lines(), people=list(people()),
                        currency=load_household().currency)
 
 

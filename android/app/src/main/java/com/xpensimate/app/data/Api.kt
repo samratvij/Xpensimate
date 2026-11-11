@@ -23,6 +23,28 @@ interface Api {
     @GET("api/v1/summary")
     suspend fun summary(@Query("month") month: String, @Query("purpose") purpose: String? = null): Summary
 
+    @GET("api/v1/balances")
+    suspend fun balances(@Query("month") month: String): Balances
+
+    @PUT("api/v1/balances/{account}")
+    suspend fun setBalance(@Path("account") account: String, @Body body: BalanceIn): Response<Unit>
+
+    @Multipart
+    @POST("api/v1/balances/read")
+    suspend fun readBalances(@Part file: MultipartBody.Part, @Part owner: MultipartBody.Part? = null): BalanceRead
+
+    @POST("api/v1/balances/batch")
+    suspend fun saveBalances(@Body body: BalanceBatch): Response<Unit>
+
+    @GET("api/v1/me")
+    suspend fun me(): Me
+
+    @GET("api/v1/income")
+    suspend fun income(@Query("month") month: String): IncomeMonth
+
+    @POST("api/v1/income")
+    suspend fun addIncome(@Body body: IncomeIn): Transaction
+
     @GET("api/v1/transactions")
     suspend fun transactions(
         @Query("start") start: String? = null,

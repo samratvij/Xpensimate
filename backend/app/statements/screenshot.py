@@ -16,7 +16,7 @@ from app.db.models import Account
 from app.core.household import load_household
 from app.services.llm import LlmError, ask
 from app.services.ocr_service import OcrError, normalize_image
-from app.statements.parsers import INTEREST, PAYMENT, PURCHASE, REFUND, ParsedStatement, StatementRow, is_payment_reversal
+from app.statements.parsers import DEPOSIT, TRANSFER_OUT, INTEREST, PAYMENT, PURCHASE, REFUND, ParsedStatement, StatementRow, is_payment_reversal
 
 log = logging.getLogger(__name__)
 
@@ -45,8 +45,11 @@ Return every transaction that is fully visible, top to bottom:
 - merchant is the transaction's name exactly as shown (keep store numbers and prefixes such as "SQ *").
   Leave out the city or location line under it.
 - amount is the amount shown, as a positive number, whatever sign or colour the app uses.
-- kind: "purchase" for spending; "refund" for money returned by a merchant; "payment" for a payment
-  towards the card or a transfer in; "interest" for interest or fees charged.
+- kind: "purchase" for spending; "refund" for money returned by a merchant; "payment" (credit card
+  screens only) for a payment towards the card; "deposit" for money coming into a bank account (pay or
+  payroll, a direct deposit, an e-transfer received, a transfer in); "transfer" for money sent out of a
+  bank account that isn't a purchase (an e-transfer sent, a transfer to another account, a credit card
+  payment made from it, a contribution to an investment account); "interest" for interest or fees charged.
 - pending is true only when the app marks the row as pending or authorized (not yet posted).
 - Skip rows cut off at the edge of the screen, balances, totals, headers and anything that is not a
   transaction.
@@ -63,7 +66,7 @@ class ScreenshotRow(BaseModel):
     date: str
     merchant: str
     amount: float
-    kind: Literal["purchase", "refund", "payment", "interest"]
+    kind: Literal["purchase", "refund", "payment", "interest", "deposit", "transfer"]
     pending: bool
 
 
@@ -95,7 +98,7 @@ def to_statement(read: ScreenshotRead, today: date) -> ParsedStatement:
     if not read.is_transaction_list:
         raise ValueError("This image doesn't look like a list of bank transactions")
     out = ParsedStatement(SCREENSHOT, "" if read.account_id == UNKNOWN_ACCOUNT else read.account_id)
-    signs = {PURCHASE: 1, INTEREST: 1, REFUND: -1, PAYMENT: -1}
+    signs = {PURCHASE: 1, INTEREST: 1, TRANSFER_OUT: 1, REFUND: -1, PAYMENT: -1, DEPOSIT: -1}
     for row in read.rows:
         try:
             day = date.fromisoformat(row.date)

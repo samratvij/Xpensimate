@@ -28,40 +28,134 @@ budget_line = "Parents Shopping"
 transfer_budget_line = "Parents"
 icon = "family"
 
-# Every account the parsers can fall back to, plus a second RBC card; no card digits (tests set them).
+# Accounts of every kind the tests use (fictional). Card digits only where a test needs them; tests set others.
 [[accounts]]
 id = "ws_cash"
 institution = "Wealthsimple"
 name = "Wealthsimple Cash"
+kind = "chequing"
+owner = "Alex"
 [[accounts]]
 id = "ws_credit"
 institution = "Wealthsimple"
 name = "Wealthsimple Credit Card"
+kind = "credit_card"
+owner = "Alex"
 [[accounts]]
 id = "tangerine_cheq"
 institution = "Tangerine"
 name = "Tangerine Chequing"
+kind = "chequing"
+owner = "Alex"
 [[accounts]]
 id = "tangerine_mastercard"
 institution = "Tangerine"
 name = "Tangerine Money-Back World Mastercard"
+kind = "credit_card"
+owner = "Shared"
+card_last4 = ["7001", "7002"]
 [[accounts]]
 id = "pc_mastercard"
 institution = "PC Financial"
 name = "PC Financial Mastercard"
+kind = "credit_card"
+owner = "Alex"
 [[accounts]]
 id = "pc_money"
 institution = "PC Financial"
 name = "PC Money Account"
+kind = "chequing"
+owner = "Alex"
 [[accounts]]
 id = "ctfs_triangle"
 institution = "Canadian Tire Financial Services"
 name = "Triangle Mastercard"
+kind = "credit_card"
+owner = "Shared"
 [[accounts]]
 id = "rbc_visa"
 institution = "RBC"
 name = "RBC ION Visa"
+kind = "credit_card"
+owner = "Shared"
 [[accounts]]
 id = "rbc_sam"
 institution = "RBC"
 name = "RBC credit card (Sam)"
+kind = "credit_card"
+owner = "Sam"
+[[accounts]]
+id = "rbc_sam_cheq"
+institution = "RBC"
+name = "RBC Chequing (Sam)"
+kind = "chequing"
+owner = "Sam"
+card_last4 = ["4150"]
+[[accounts]]
+id = "ws_sam_cheq"
+institution = "Wealthsimple"
+name = "Wealthsimple Chequing (Sam)"
+kind = "chequing"
+owner = "Sam"
+[[accounts]]
+id = "ws_joint"
+institution = "Wealthsimple"
+name = "Wealthsimple Family (joint chequing)"
+kind = "chequing"
+owner = "Shared"
+[[accounts]]
+id = "pc_savings"
+institution = "PC Financial"
+name = "PC Savings"
+kind = "savings"
+owner = "Alex"
+[[accounts]]
+id = "rbc_alex_savings"
+institution = "RBC"
+name = "RBC Savings (Alex)"
+kind = "savings"
+owner = "Alex"
+[[accounts]]
+id = "rbc_sam_savings"
+institution = "RBC"
+name = "RBC Savings (Sam)"
+kind = "savings"
+owner = "Sam"
+card_last4 = ["4143"]
+[[accounts]]
+id = "tangerine_savings"
+institution = "Tangerine"
+name = "Tangerine Savings"
+kind = "savings"
+owner = "Alex"
+card_last4 = ["4541"]
+[[accounts]]
+id = "ws_savings"
+institution = "Wealthsimple"
+name = "Wealthsimple Savings"
+kind = "savings"
+owner = "Alex"
+[[accounts]]
+id = "ws_tfsa"
+institution = "Wealthsimple"
+name = "Wealthsimple TFSA"
+kind = "TFSA"
+owner = "Alex"
+[[accounts]]
+id = "ws_fhsa"
+institution = "Wealthsimple"
+name = "Wealthsimple FHSA"
+kind = "FHSA"
+owner = "Alex"
+[[accounts]]
+id = "ws_sam_fhsa"
+institution = "Wealthsimple"
+name = "Wealthsimple FHSA (Sam)"
+kind = "FHSA"
+owner = "Sam"
+[[accounts]]
+id = "parents_loan"
+institution = "Family"
+name = "Loan to family"
+kind = "asset"
+owner = "Shared"

@@ -139,6 +139,21 @@ def test_card_digits_beat_the_parsers_default_account(db):
     assert db.scalar(select(Transaction)).account_id == "tangerine_cheq"
 
 
+def test_one_account_with_two_cards(db):
+    """The Tangerine Mastercard has Alex's card (7001) and Sam's (7002): either one is that account, even
+    when another account at the bank would be the parser's guess."""
+    from app.db.models import Account
+    from app.services.accounts import account_for_alert
+
+    assert db.get(Account, "tangerine_mastercard").card_digits == ["7001", "7002"]
+    assert account_for_alert(db, "7001", "tangerine_cheq") == "tangerine_mastercard"
+    assert account_for_alert(db, "7002", None, "Tangerine Mastercard") == "tangerine_mastercard"
+    sams = gmail_message("t7", "Tangerine <donotreply@tangerine.ca>", alerts.TANGERINE_CC_SUBJECT,
+                             alerts.TANGERINE_CC_BODY.replace("1234", "7002"))
+    assert process_message(db, FakeGmail([sams]), "t7") == "created"
+    assert db.scalar(select(Transaction)).account_id == "tangerine_mastercard"
+
+
 def test_shared_card_digits_fall_back_to_the_parsers_default_account(db):
     from app.db.models import Account
 

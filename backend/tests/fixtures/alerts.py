@@ -80,3 +80,67 @@ UNIQLO CANADA"""
 
 RBC_DEBIT_SUBJECT = "You made a purchase."
 RBC_DEBIT_BODY = "As requested, a purchase of $12.00 was made with your RBC Client Card (debit card) ************9999 towards METRO 123."
+
+# Wealthsimple "Direct deposit received" email, modeled on a real one (Oct 2026), plain-text part with the links and referral
+# block trimmed. The payer is Alex's employer.
+WS_DIRECT_DEPOSIT_SUBJECT = "Direct deposit received"
+WS_DIRECT_DEPOSIT_BODY = """[Wealthsimple]
+---------------------------------------------------------------
+We got your direct deposit!
+Amount: $3,250.40
+From: NORTHWIND
+Your deposit is now available in your chequing account.
+Give $25, get $25
+---------------------------------------------------------------
+Have questions? We're here to help, visit our Help Centre"""
+
+# Modeled on a real email (Oct 2026): a move between the household's own Wealthsimple accounts.
+WS_TRANSFER_SUBJECT = "You made a transfer"
+WS_TRANSFER_BODY = """You made a transfer
+Amount: $450.00 CAD
+From: Checking (Chequing)
+To: \N{HOUSE WITH GARDEN}Family (Joint Chequing)
+Track the status of this transfer in the activity feed."""
+
+# Synthetic until a real RBC deposit alert arrives: Sam's pay into RBC Chequing (account ending 4150), as
+# the RBC app lists it ("Payroll Deposit PAIE/PAYROLL", Oct 29 2026).
+RBC_DEPOSIT_SUBJECT = "A deposit was made to your account."
+RBC_DEPOSIT_BODY = """Hello,
+As requested, we&rsquo;re letting you know that a deposit of $2,980.20 was made to your RBC Royal Bank account ************4150 on October 29, 2026.
+Account:
+************4150
+Deposit Amount:
+$2,980.20
+Transaction Description:
+Payroll Deposit PAIE/PAYROLL"""
+
+RBC_DEPOSIT_NO_PAYER_BODY = """Hello,
+As requested, we&rsquo;re letting you know that a deposit of $2,980.20 was made to your RBC Royal Bank account ************4150 on October 29, 2026."""
+
+RBC_SMALL_DEPOSIT_BODY = """Hello,
+A deposit of $40.00 was made to your RBC Royal Bank account ************4150 on October 30, 2026.
+Transaction Description:
+Mobile cheque deposit"""
+
+# Modeled on a real email (Oct 2026): Sam moving money into the joint account (their own transfers name them).
+WS_SAM_TRANSFER_SUBJECT = "Sam made a transfer"
+WS_SAM_TRANSFER_BODY = """Sam made a transfer
+Amount: $200.00 CAD
+From: Chequing (******000CAD)
+To: \N{HOUSE WITH GARDEN}Family (Joint Chequing)
+Initiated by: Sam Park
+Track the status of this transfer in the activity feed."""
+
+# Modeled on a real email (Oct 2026): out of the joint account back to Alex's chequing.
+WS_FROM_JOINT_BODY = """You made a transfer
+Amount: $650.00 CAD
+From: \N{HOUSE WITH GARDEN}Family (Joint Chequing)
+To: Checking (Chequing)
+Track the status of this transfer in the activity feed."""
+
+# Synthetic: a TFSA contribution, in the same template.
+WS_TFSA_TRANSFER_BODY = """You made a transfer
+Amount: $500.00 CAD
+From: Checking (Chequing)
+To: TFSA (TFSA)
+Track the status of this transfer in the activity feed."""

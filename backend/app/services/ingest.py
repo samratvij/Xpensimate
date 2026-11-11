@@ -10,9 +10,13 @@ from sqlalchemy.orm import Session
 from app.core.budget_evaluator import check_transaction
 from app.core.household import load_household
 from app.db.models import RawIngestLog, Transaction
+from app.services import income, savings
 from app.services.categorizer import apply_classification, categorize
+from app.services.income import INCOME
+from app.services.savings import TRANSFER
 from app.services.reconciler import merchant_score, try_match_transaction
-from app.services.recurring import link_transaction
+from app.services.recurring import link_transaction, track_new_subscription
+from app.services.renewals import announce_new_subscription
 
 
 @dataclass
@@ -29,6 +33,16 @@ class NewTransaction:
     bank_category: str | None = None
     # Not an expense (e.g. a card payment from a statement): stored for dedupe/audit, never categorized.
     excluded: bool = False
+    # Income (pay): `merchant` is the payer, `amount` positive. Stored excluded, with who earned it.
+    income: bool = False
+    # A move between the household's own accounts, from account_id to transfer_to (None: the other side isn't
+    # known). Stored excluded; app/services/savings.py tells saving and investing from the two accounts.
+    transfer: bool = False
+    transfer_to: str | None = None
+
+    @property
+    def kind(self) -> str | None:
+        return INCOME if self.income else TRANSFER if self.transfer else None
 
 
 def find_by_source_ref(db: Session, source: str, source_ref: str) -> Transaction | None:
@@ -59,13 +73,15 @@ def find_twin(db: Session, new: NewTransaction) -> Transaction | None:
     merchant, a differing account doesn't rule it out."""
     if new.source not in LIVE_SOURCES:
         return None
+    # Income only twins income (it is stored excluded); spending only twins spending.
+    kind = Transaction.txn_type == new.kind if new.kind else Transaction.excluded.is_(False)
     candidates = db.scalars(
         select(Transaction).where(
             Transaction.source.in_(LIVE_SOURCES),
             Transaction.source_ref.is_distinct_from(new.source_ref),
             Transaction.amount.between(new.amount - Decimal("0.01"), new.amount + Decimal("0.01")),
             Transaction.timestamp.between(new.timestamp - TWIN_WINDOW, new.timestamp + TWIN_WINDOW),
-            Transaction.excluded.is_(False),
+            kind,
         )
     )
     for txn in candidates:
@@ -85,6 +101,8 @@ def find_twin(db: Session, new: NewTransaction) -> Transaction | None:
 
 def ingest_transaction(db: Session, new: NewTransaction, raw_payload: dict[str, Any]) -> tuple[Transaction, bool]:
     """Categorize and store one upstream event. Returns (transaction, created); duplicates return the existing row."""
+    if new.kind:
+        new.amount = abs(new.amount)
     if new.source_ref and (existing := find_by_source_ref(db, new.source, new.source_ref)):
         return existing, False
     if twin := find_twin(db, new):
@@ -101,14 +119,21 @@ def ingest_transaction(db: Session, new: NewTransaction, raw_payload: dict[str, 
         source_ref=new.source_ref,
         timestamp=new.timestamp,
         amount=new.amount,
-        txn_type="REFUND" if new.amount < 0 else "PURCHASE",
+        txn_type=new.kind or ("REFUND" if new.amount < 0 else "PURCHASE"),
         currency=(new.currency or load_household().currency).upper(),
         merchant_raw=new.merchant,
-        reconciliation_status=new.reconciliation_status,
+        reconciliation_status="SETTLED" if new.kind else new.reconciliation_status,
         category_is_manual=False,
         purpose_is_manual=False,
     )
-    if new.excluded:
+    new_subscription = None
+    if new.income:
+        txn.excluded = True
+        income.classify(db, txn)
+    elif new.transfer:
+        txn.counterpart_account_id = new.transfer_to
+        savings.classify(db, txn)
+    elif new.excluded:
         txn.excluded = True
         txn.categorized_by = "statement"
     else:
@@ -124,7 +149,7 @@ def ingest_transaction(db: Session, new: NewTransaction, raw_payload: dict[str, 
                 bank_category=new.bank_category,
             ),
         )
-        link_transaction(db, txn)
+        new_subscription = None if link_transaction(db, txn) else track_new_subscription(db, txn)
     db.add(RawIngestLog(source=new.source, payload=raw_payload))
     db.add(txn)
     try:
@@ -136,6 +161,10 @@ def ingest_transaction(db: Session, new: NewTransaction, raw_payload: dict[str, 
             return existing, False
         raise
     db.refresh(txn)
+    if new.kind:
+        return txn, True
+    if new_subscription is not None:
+        announce_new_subscription(db, new_subscription)
     # A receipt may already be waiting for this charge.
     try_match_transaction(db, txn)
     check_transaction(db, txn)

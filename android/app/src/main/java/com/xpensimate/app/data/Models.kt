@@ -1,5 +1,8 @@
 package com.xpensimate.app.data
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -13,6 +16,8 @@ data class Transaction(
     val timestamp: String,
     val amount: Double,
     @SerialName("txn_type") val txnType: String,
+    /** Transfers: the own account the money went to (accountId is where it came from; null = not known). */
+    @SerialName("counterpart_account_id") val counterpartAccountId: String? = null,
     val currency: String,
     @SerialName("merchant_raw") val merchantRaw: String,
     @SerialName("merchant_normalized") val merchantNormalized: String? = null,
@@ -36,9 +41,15 @@ data class Transaction(
 ) {
     val merchant: String get() = merchantNormalized ?: merchantRaw
 
+    /** Money earned (pay): never spending; its category is an income kind and its purpose who earned it. */
+    val isIncome: Boolean get() = txnType == "INCOME"
+
+    /** Money moved between the household's own accounts: never spending. */
+    val isTransfer: Boolean get() = txnType == "TRANSFER"
+
     /** A guess the user should glance at: picked by Claude (or nothing) with low confidence, never confirmed. */
     val needsCheck: Boolean
-        get() = !excluded && !categoryIsManual && !purposeIsManual &&
+        get() = !excluded && !isIncome && !categoryIsManual && !purposeIsManual &&
             (categorizedBy == "none" || (categorizedBy == "llm" && inferenceConfidence < 0.6))
 }
 
@@ -82,7 +93,10 @@ data class TransactionPatch(
 data class LineSpend(
     val category: String,
     val spent: Double,
+    /** Still to come this month: bills not yet paid plus the rest of the usual spend on a necessity. */
     val expected: Double,
+    @SerialName("bills_due") val billsDue: Double = 0.0,
+    val estimated: Double = 0.0,
     val projected: Double,
     @SerialName("monthly_limit") val monthlyLimit: Double? = null,
     @SerialName("percent_used") val percentUsed: Double? = null,
@@ -97,7 +111,79 @@ data class Summary(
     val purpose: String? = null,
     @SerialName("total_spent") val totalSpent: Double,
     @SerialName("total_expected") val totalExpected: Double,
+    @SerialName("total_bills_due") val totalBillsDue: Double = 0.0,
+    @SerialName("total_estimated") val totalEstimated: Double = 0.0,
     val categories: List<LineSpend>,
+    val income: IncomeTotals = IncomeTotals(),
+    /** Household only: null when the summary is for one person. */
+    val savings: SavingsTotals? = null,
+)
+
+/** Income less spending (and as a rate), and money moved into and out of savings and investment accounts. */
+@Serializable
+data class SavingsTotals(
+    val kept: Double = 0.0,
+    val rate: Double? = null,
+    @SerialName("to_savings") val toSavings: Double = 0.0,
+    @SerialName("from_savings") val fromSavings: Double = 0.0,
+    @SerialName("to_investments") val toInvestments: Double = 0.0,
+    @SerialName("from_investments") val fromInvestments: Double = 0.0,
+    @SerialName("net_to_savings") val netToSavings: Double = 0.0,
+    @SerialName("net_to_investments") val netToInvestments: Double = 0.0,
+    val moved: Double = 0.0,
+)
+
+/** The month's income: received and still expected (by who earned it), and what's left after spending. */
+@Serializable
+data class IncomeTotals(
+    val received: Double = 0.0,
+    @SerialName("by_person") val byPerson: Map<String, Double> = emptyMap(),
+    val expected: Double = 0.0,
+    @SerialName("expected_by_person") val expectedByPerson: Map<String, Double> = emptyMap(),
+    @SerialName("left_after_spending") val leftAfterSpending: Double = 0.0,
+    @SerialName("projected_left") val projectedLeft: Double = 0.0,
+)
+
+val INCOME_KINDS = listOf("Salary", "Other income")
+/** The household's people, from /taxonomy when the app starts. Compose state, so screens redraw when it arrives. */
+object HouseholdPeople {
+    var names by mutableStateOf<List<String>>(emptyList())
+}
+
+/** Who income can belong to: each person in the household, or Shared. */
+val EARNERS: List<String> get() = HouseholdPeople.names + "Shared"
+
+@Serializable
+data class PayDate(
+    @SerialName("source_id") val sourceId: String,
+    val name: String,
+    val earner: String,
+    val day: String,
+    val amount: Double,
+    /** received | upcoming | late */
+    val status: String,
+)
+
+@Serializable
+data class IncomeMonth(
+    val month: String,
+    val received: Double,
+    @SerialName("by_person") val byPerson: Map<String, Double> = emptyMap(),
+    val expected: Double,
+    @SerialName("left_after_spending") val leftAfterSpending: Double = 0.0,
+    val deposits: List<Transaction> = emptyList(),
+    @SerialName("pay_dates") val payDates: List<PayDate> = emptyList(),
+)
+
+/** Income entered by hand; amount is a decimal string so cents stay exact. */
+@Serializable
+data class IncomeIn(
+    val amount: String,
+    @SerialName("received_on") val receivedOn: String,
+    val earner: String,
+    val payer: String,
+    val category: String,
+    @SerialName("account_id") val accountId: String? = null,
 )
 
 @Serializable
@@ -109,6 +195,8 @@ data class Taxonomy(
     @SerialName("person_lines") val personLines: Map<String, String> = emptyMap(),
     // ISO 4217 code the household's amounts are shown in.
     val currency: String = "CAD",
+    // The household's people (without Shared).
+    val people: List<String> = emptyList(),
 )
 
 @Serializable
@@ -116,6 +204,9 @@ data class Account(
     val id: String,
     val institution: String,
     @SerialName("account_name") val accountName: String,
+    val owner: String = "Shared",
+    /** chequing | savings | credit_card | tfsa | rrsp | fhsa | non_registered | loan | asset */
+    val kind: String = "chequing",
 )
 
 @Serializable
@@ -241,6 +332,8 @@ data class StatementLine(
     val transaction: TxnBrief? = null,
     val pays: TxnBrief? = null,
     val candidates: List<TxnBrief> = emptyList(),
+    /** Deposits and transfers: what the app thinks it is ("move:<account>", "transfer"); applies unless changed. */
+    val suggested: String? = null,
     /** Screenshots only: not yet posted by the bank. */
     val pending: Boolean = false,
 )
@@ -358,3 +451,63 @@ data class Insight(
 
 @Serializable
 data class DismissInsight(val key: String)
+
+/** One account's balance at the end of a month (credit cards and loans: what is owed). */
+@Serializable
+data class AccountBalance(
+    @SerialName("account_id") val accountId: String,
+    @SerialName("account_name") val accountName: String,
+    val kind: String,
+    val owner: String,
+    /** savings | investments | chequing | credit_cards | loans | other */
+    val group: String,
+    val balance: Double? = null,
+    @SerialName("as_of") val asOf: String? = null,
+    /** From an earlier month, carried forward. */
+    val stale: Boolean = false,
+    val source: String? = null,
+    @SerialName("previous_as_of") val previousAsOf: String? = null,
+    val change: Double? = null,
+    val contributions: Double? = null,
+    @SerialName("market_return") val marketReturn: Double? = null,
+)
+
+@Serializable
+data class Balances(
+    val month: String,
+    @SerialName("as_of") val asOf: String,
+    val assets: Double,
+    val liabilities: Double,
+    @SerialName("net_worth") val netWorth: Double,
+    val change: Double? = null,
+    val contributions: Double = 0.0,
+    @SerialName("market_return") val marketReturn: Double = 0.0,
+    val missing: Int = 0,
+    val accounts: List<AccountBalance> = emptyList(),
+)
+
+/** A balance typed in; amount as a decimal string so cents stay exact. */
+@Serializable
+data class BalanceIn(@SerialName("as_of") val asOf: String, val balance: String)
+
+@Serializable
+data class BalanceReadRow(
+    @SerialName("shown_name") val shownName: String,
+    val balance: Double,
+    val owed: Boolean,
+    val currency: String,
+    @SerialName("account_id") val accountId: String? = null,
+)
+
+/** What a screenshot showed; nothing is saved until confirmed. */
+@Serializable
+data class BalanceRead(@SerialName("as_of") val asOf: String, val rows: List<BalanceReadRow>)
+
+@Serializable
+data class BalanceBatchRow(@SerialName("account_id") val accountId: String, val balance: String)
+
+@Serializable
+data class BalanceBatch(@SerialName("as_of") val asOf: String, val rows: List<BalanceBatchRow>)
+
+@Serializable
+data class Me(val user: String)

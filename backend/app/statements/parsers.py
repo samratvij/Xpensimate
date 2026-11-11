@@ -2,7 +2,9 @@
 
 Each bank exports differently (sign of spending, date format, payments). parse_statement() detects the
 format from the header row and returns rows in one shape: spending positive, refunds and payments
-negative, plus a kind (purchase | refund | payment | interest).
+negative, plus a kind (purchase | refund | payment | interest | deposit | transfer). A deposit is money into a
+bank account (pay, an e-transfer received, a transfer in); its amount is negative like a refund. A transfer is
+money sent out of a bank account (an e-transfer, a move to another account); positive like a purchase.
 """
 import csv
 import hashlib
@@ -13,7 +15,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 
-PURCHASE, REFUND, PAYMENT, INTEREST = "purchase", "refund", "payment", "interest"
+PURCHASE, REFUND, PAYMENT, INTEREST, DEPOSIT = "purchase", "refund", "payment", "interest", "deposit"
+TRANSFER_OUT = "transfer"
 
 
 @dataclass

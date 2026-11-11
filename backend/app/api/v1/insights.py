@@ -15,7 +15,7 @@ from app.schemas import AccountCoverage, DismissIn, InsightOut, MerchantTotal, M
 from app.services import insights as insight_service
 from app.services.merchant import merchant_key
 from app.services.recurring import expected_spend
-from app.services.spending import month_bounds, spend_by
+from app.services.spending import estimated_spend, month_bounds, spend_by
 
 router = APIRouter(tags=["insights"])
 
@@ -54,9 +54,11 @@ def trends(
         month = _shift(current, -i)
         start, end = _bounds(month)
         lines = spend_by(db, start, end, purpose, "budget_line")
-        expected = expected_spend(db, start.date(), end.date(), today.date(), "budget_line", purpose) if i == 0 else {}
-        out.append(MonthTotal(month=month, spent=sum(lines.values(), ZERO), expected=sum(expected.values(), ZERO),
-                              by_line=lines))
+        bills = expected_spend(db, start.date(), end.date(), today.date(), "budget_line", purpose) if i == 0 else {}
+        estimated = estimated_spend(db, month, tz, today.date(), lines, bills, purpose) if i == 0 else {}
+        bills_due, estimate = sum(bills.values(), ZERO), sum(estimated.values(), ZERO)
+        out.append(MonthTotal(month=month, spent=sum(lines.values(), ZERO), expected=bills_due + estimate,
+                              bills_due=bills_due, estimated=estimate, by_line=lines))
     return out
 
 

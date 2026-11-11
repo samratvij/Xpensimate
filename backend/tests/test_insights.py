@@ -212,19 +212,19 @@ def test_an_untracked_monthly_charge(client, db):
 
 
 def test_bills_overdue_and_coming_up(db):
-    recurring(db, name="Rent", merchant_pattern=None, category="Rent + Parking", amount=Decimal("2874"),
+    recurring(db, name="Rent", merchant_pattern=None, category="Rent + Parking", amount=Decimal("2650"),
               anchor_date=date(2026, 8, 1))
     recurring(db, name="Hydro", merchant_pattern="HYDRO OTTAWA", category="Hydro", amount=Decimal("90"),
               amount_tolerance=Decimal("0.50"), anchor_date=date(2026, 8, 15))
     found = cards(db)
     [overdue] = [i for i in found if i.kind == "overdue_bill"]
     assert overdue.title == "Rent was due Nov 1"
-    assert overdue.body == "$2,874. Mark it paid if you paid it another way."
+    assert overdue.body == "$2,650. Mark it paid if you paid it another way."
     [coming] = [i for i in found if i.kind == "upcoming_bills"]
     assert coming.title == "1 bill in the next 7 days · $90.00"
     assert coming.body == "Hydro $90.00 on Nov 15."
 
-    on(db, "2874.00", date(2026, 11, 1), merchant="Rent", category="Rent + Parking")  # paid, never linked
+    on(db, "2650.00", date(2026, 11, 1), merchant="Rent", category="Rent + Parking")  # paid, never linked
     assert "overdue_bill" not in kinds(cards(db))
 
 

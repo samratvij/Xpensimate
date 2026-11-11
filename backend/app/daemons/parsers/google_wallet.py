@@ -3,7 +3,7 @@
 Wallet names the merchant in the title and the amount and card in the text ("$12.34 with Mastercard ••1234"),
 though wording varies; anything with an amount that can't be read is kept as "unparsed" to tune this.
 The card's last four digits pick the account, within the issuer the card is named after: Wallet may show its
-own token number rather than the card's (a Wealthsimple card showed "Wealthsimple VIP ••2149", the last four of a
+own token number rather than the card's (a Wealthsimple card showed "Wealthsimple VIP ••9149", the last four of a
 Triangle card), so the digits alone can name the wrong bank.
 """
 import re

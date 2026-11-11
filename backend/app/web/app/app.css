@@ -190,3 +190,4 @@ textarea.note-input { resize: none; min-height: 64px; font: inherit; line-height
 .insight-x { padding: 6px; color: var(--muted); }
 .insight-x svg { width: 18px; height: 18px; }
 .insights .btn.text { padding: 4px; }
+.sub.warn-text { color: var(--warning); }

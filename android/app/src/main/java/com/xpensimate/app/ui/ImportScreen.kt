@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -29,9 +30,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -44,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xpensimate.app.data.Account
+import kotlin.math.abs
 import com.xpensimate.app.data.Api
 import com.xpensimate.app.data.StatementCommit
 import com.xpensimate.app.data.StatementImport
@@ -73,7 +78,7 @@ class ImportViewModel(private val api: Api) : ViewModel() {
         private set
     var error by mutableStateOf<String?>(null)
         private set
-    /** Row index -> "add" | "skip" | "match:<id>" for unclear rows. */
+    /** Row index -> "add" | "skip" | "match:<id>" for unclear rows; "income" | "add" | "transfer" | "skip" for deposits. */
     val decisions = mutableStateMapOf<String, String>()
     /** Ids of replaced charges to keep (a separate purchase after all). */
     val keep = mutableStateListOf<String>()
@@ -98,7 +103,11 @@ class ImportViewModel(private val api: Api) : ViewModel() {
                     month?.let { MultipartBody.Part.createFormData("month", it.toString()) },
                     account?.let { MultipartBody.Part.createFormData("account_id", it) },
                 )
-            }.onSuccess { preview = it }.onFailure { error = it.friendly() }
+            }.onSuccess { p ->
+                preview = p
+                // What the app suggests is chosen unless changed.
+                p.rows.forEach { row -> row.suggested?.let { decisions[row.index.toString()] = it } }
+            }.onFailure { error = it.friendly() }
             busy = false
         }
     }
@@ -139,6 +148,9 @@ private val ACTION_TITLES = mapOf(
     "imported" to "Already imported",
     "outside" to "Outside the chosen month",
     "unclear" to "Needs your decision",
+    "income" to "Pay → recorded as income",
+    "deposit" to "Money in: your call",
+    "transfer" to "Money out: where to?",
 )
 
 @Composable
@@ -221,7 +233,8 @@ private fun LazyListScope.previewItems(p: StatementImport, vm: ImportViewModel) 
         "done", "failed" -> item {
             val r = p.result.orEmpty().mapValues { it.value.jsonPrimitive.intOrNull }
             Text(
-                if (p.status == "done") "Done. Added ${r["added"] ?: 0}, confirmed ${r["matched"] ?: 0}, " +
+                if (p.status == "done") "Done. Added ${r["added"] ?: 0}" +
+                    (r["income"]?.let { ", income $it" } ?: "") + (r["transfer"]?.let { ", transfers $it" } ?: "") + ", confirmed ${r["matched"] ?: 0}, " +
                     "card payments ${r["payment"] ?: 0}, skipped ${r["skipped"] ?: 0}" +
                     (r["replaced"]?.let { ", replaced charges removed $it." } ?: ".")
                 else "The import stopped part way. Importing the file again picks up the rest.",
@@ -236,6 +249,33 @@ private fun LazyListScope.previewItems(p: StatementImport, vm: ImportViewModel) 
                 item { SectionTitle("Needs your decision (${unclear.size})") }
                 items(unclear, key = { "u${it.index}" }) { row -> UnclearRow(row, vm.decisions[row.index.toString()]) { vm.decisions[row.index.toString()] = it } }
             }
+            val deposits = p.rows.filter { it.action == "deposit" }
+            if (deposits.isNotEmpty()) {
+                item {
+                    SectionTitle("Money in: what is it? (${deposits.size})")
+                    Text("Deposits that aren't pay. Income counts as money earned; money back counts against spending " +
+                        "(someone paying you back); a transfer is your own money moving and isn't counted.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                items(deposits, key = { "d${it.index}" }) { row ->
+                    MoveRow(row, vm.accounts.filter { it.id != p.accountId }, incoming = true,
+                        chosen = vm.decisions[row.index.toString()]) { vm.decisions[row.index.toString()] = it }
+                }
+            }
+            val transfers = p.rows.filter { it.action == "transfer" }
+            if (transfers.isNotEmpty()) {
+                item {
+                    SectionTitle("Money out: where did it go? (${transfers.size})")
+                    Text("Transfers and e-transfers sent. To a savings or investment account counts as saving; between " +
+                        "people in the household isn't counted; paying someone for something is spending.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                items(transfers, key = { "t${it.index}" }) { row ->
+                    MoveRow(row, vm.accounts.filter { it.id != p.accountId }, incoming = false,
+                        chosen = vm.decisions[row.index.toString()]) { vm.decisions[row.index.toString()] = it }
+                }
+            }
+            section("income", p, null)
             section("add", p, "Categorized with your rules, your history, then the AI model.")
             section("payment", p, null)
             val (replaced, stray) = p.missing.partition { it.replacedBy != null }
@@ -255,8 +295,8 @@ private fun LazyListScope.previewItems(p: StatementImport, vm: ImportViewModel) 
                 items(stray, key = { "m${it.id}" }) { BriefRow(it) }
             }
             item {
-                val left = unclear.count { vm.decisions[it.index.toString()] == null }
-                val anything = p.rows.any { it.action in setOf("add", "payment", "match", "unclear") }
+                val left = (unclear + deposits + transfers).count { vm.decisions[it.index.toString()] == null }
+                val anything = p.rows.any { it.action in setOf("add", "payment", "match", "unclear", "income", "deposit", "transfer") }
                 vm.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Button(onClick = vm::commit, enabled = !vm.busy && left == 0 && anything) { Text("Import") }
@@ -288,7 +328,7 @@ private fun SectionTitle(text: String) =
 private fun LineRow(row: StatementLine) {
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Column(Modifier.weight(1f)) {
-            Text(row.merchant + when (row.kind) { "refund" -> " (refund)"; "interest" -> " (interest)"; else -> "" } +
+            Text(row.merchant + when (row.kind) { "refund" -> " (refund)"; "interest" -> " (interest)"; "deposit" -> " (deposit)"; "transfer" -> " (transfer)"; else -> "" } +
                 if (row.pending) " (pending)" else "")
             Text(listOfNotNull(row.date, row.bankCategory, row.pays?.let { "also excludes ${it.merchant} ${it.date}" }).joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -325,6 +365,52 @@ private fun ReplacedRow(t: TxnBrief, kept: Boolean, onKeep: (Boolean) -> Unit) {
     }
     HorizontalDivider()
 }
+
+/** A deposit (money in) or a transfer out: what it was, including which own account it came from or went to. */
+@Composable
+private fun MoveRow(row: StatementLine, accounts: List<Account>, incoming: Boolean, chosen: String?, onChoose: (String) -> Unit) {
+    var picking by remember { mutableStateOf(false) }
+    val amount = abs(row.amount.toDouble()).money()
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp)) {
+            Text("${row.date} · ${row.merchant} · ${if (incoming) "+" else ""}$amount", fontWeight = FontWeight.SemiBold)
+            val moved = chosen?.takeIf { it.startsWith("move:") }?.removePrefix("move:")
+            Box {
+                Row(Modifier.fillMaxWidth().clickable { picking = true }, verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = moved != null, onClick = { picking = true })
+                    Text(moved?.let { id -> "${if (incoming) "From" else "To"} ${accounts.firstOrNull { it.id == id }?.accountName ?: id}" }
+                        ?: "${if (incoming) "From" else "To"} another of our accounts…")
+                }
+                DropdownMenu(expanded = picking, onDismissRequest = { picking = false }) {
+                    accounts.sortedBy { MOVE_ORDER.indexOf(it.kind).let { i -> if (i < 0) 99 else i } }.forEach { a ->
+                        DropdownMenuItem(
+                            text = { Text("${a.accountName} · ${a.kind.replace('_', ' ')}") },
+                            onClick = { onChoose("move:${a.id}"); picking = false },
+                        )
+                    }
+                }
+            }
+            val options = if (incoming) listOf(
+                "income" to "Income",
+                "add" to "Money back (counts against spending)",
+                "transfer" to "From someone in the household / own money (not counted)",
+                "skip" to "Skip",
+            ) else listOf(
+                "transfer" to "To someone in the household / own money (not counted)",
+                "add" to "Spending: paid someone for something",
+                "skip" to "Skip",
+            )
+            options.forEach { (value, label) ->
+                Row(Modifier.fillMaxWidth().clickable { onChoose(value) }, verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = chosen == value, onClick = { onChoose(value) })
+                    Text(label)
+                }
+            }
+        }
+    }
+}
+
+private val MOVE_ORDER = listOf("savings", "tfsa", "fhsa", "rrsp", "non_registered", "chequing", "credit_card", "loan", "asset")
 
 @Composable
 private fun UnclearRow(row: StatementLine, chosen: String?, onChoose: (String) -> Unit) {

@@ -1,13 +1,16 @@
 import logging
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from googleapiclient.errors import HttpError
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.daemons.gmail_client import header, message_text
 from app.daemons.parsers import gmail_query, issuer_for_sender
 from app.db.models import GmailSyncState, RawIngestLog
-from app.services.accounts import account_for_alert
+from app.services import income
+from app.services.accounts import account_for_alert, account_named, person_named
 from app.services.ingest import NewTransaction, find_by_source_ref, ingest_transaction
 
 log = logging.getLogger(__name__)
@@ -52,6 +55,11 @@ def process_message(db: Session, gmail, message_id: str) -> str:
     }
 
     parsed = issuer.parse(subject, body)
+    if parsed and parsed.transfer and parsed.from_name:
+        # The email names both accounts: find them among the household's at that bank.
+        person = person_named(parsed.person) or person_named(get_settings().gmail_owner)
+        source, target = (account_named(db, issuer.NAME, name, person) for name in (parsed.from_name, parsed.to_name))
+        parsed = replace(parsed, account_id=source or "", transfer_to=target) if source and target and source != target else None
     # The card's last four digits pick the account; the parser's account is the fallback.
     account_id = parsed and account_for_alert(db, parsed.card_suffix, parsed.account_id)
     if parsed is None or not account_id:
@@ -67,7 +75,11 @@ def process_message(db: Session, gmail, message_id: str) -> str:
         "merchant": parsed.merchant,
         "account_id": account_id,
         "card_suffix": parsed.card_suffix,
+        "income": parsed.income,
     }
+    if parsed.income and not income.is_pay(db, account_id, parsed.merchant, parsed.amount):
+        # A deposit that isn't pay (a transfer, an e-transfer from family): not income, nothing to store.
+        return "ignored"
     _, created = ingest_transaction(
         db,
         NewTransaction(
@@ -78,6 +90,9 @@ def process_message(db: Session, gmail, message_id: str) -> str:
             amount=parsed.amount,
             merchant=parsed.merchant,
             reconciliation_status="PENDING_MATCH",
+            income=parsed.income,
+            transfer=parsed.transfer,
+            transfer_to=parsed.transfer_to,
         ),
         raw_payload=payload,
     )

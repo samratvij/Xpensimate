@@ -32,6 +32,26 @@ def category_names(db: Session) -> list[str]:
     return names or list(DEFAULT_CATEGORIES)
 
 
+def roles_of(row: CategoryRow) -> dict[str, bool]:
+    return {role: getattr(row, role) for role in CategoryRow.ROLES}
+
+
+def categories_with(db: Session, role: str) -> list[str]:
+    """The categories switched on for a role (CategoryRow.ROLES), e.g. "estimated"."""
+    return list(db.scalars(select(CategoryRow.name).where(getattr(CategoryRow, role).is_(True))
+                           .order_by(CategoryRow.sort_order)))
+
+
+def set_roles(db: Session, name: str, roles: dict[str, bool]) -> CategoryRow:
+    row = db.get(CategoryRow, name)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"No category {name!r}")
+    for role, on in roles.items():
+        setattr(row, role, on)
+    db.commit()
+    return row
+
+
 def current_budget_lines(db: Session) -> tuple[str, ...]:
     return budget_lines(category_names(db))
 
@@ -79,7 +99,7 @@ def rename_category(db: Session, old: str, new: str) -> CategoryRow:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"No category {old!r}")
     new = validate_new_name(db, new)
     _rename_everywhere(db, old, new)
-    renamed = CategoryRow(name=new, sort_order=row.sort_order)
+    renamed = CategoryRow(name=new, sort_order=row.sort_order, **roles_of(row))
     db.delete(row)
     db.add(renamed)
     db.commit()
@@ -156,9 +176,11 @@ def set_categories(db: Session, edits: list[tuple[str, str | None]]) -> None:
         _rename_everywhere(db, original, f"~renaming~{i}")
     for i, (_, name) in enumerate(renames):
         _rename_everywhere(db, f"~renaming~{i}", name)
+    kept = {row.name: roles_of(row) for row in db.scalars(select(CategoryRow))}
     db.execute(delete(CategoryRow))
     db.flush()
-    db.add_all(CategoryRow(name=name, sort_order=i) for i, name in enumerate(names))
+    db.add_all(CategoryRow(name=name, sort_order=i, **(kept.get(original, {}) if original else {}))
+               for i, (name, (_, original)) in enumerate(zip(names, edits)))
     db.commit()
 
 

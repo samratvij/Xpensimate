@@ -43,7 +43,7 @@ retirement, loan or other asset; regional names like TFSA, 401(k) or ISA map ont
 person, or Shared). Every alert or notification goes to the account with a card whose last four digits match
 the alert; an account can list several cards (a shared credit card with one card each). When there are no
 digits (or two accounts share them), the bank parser's well-known account id is the fallback. When a wallet
-names the card's bank ("Wealthsimple VIP ••2149"), only that bank's accounts are considered, since a wallet
+names the card's bank ("Wealthsimple VIP ••9149"), only that bank's accounts are considered, since a wallet
 may show its own token digits. A new card is a config change, not a code change.
 
 ## Alerts: Firebase push instead of a WebSocket
@@ -82,6 +82,27 @@ over, a spike against the usual month, a subscription still charging after it wa
 a bill, something that looks like a new recurring charge (one tap tracks it as a bill), overdue and upcoming
 bills, and a likely leftover hold. Each can be dismissed. Amounts in text the server writes (these cards,
 push notifications) use the household's currency (`app/core/money.py`).
+
+## Income, savings and net worth
+- **Income**: deposit alerts and screenshot rows that come from a regular payer (an income source: who, which
+  account, payer, usual amount, cadence) are pay, filed under the person who earns it; other deposits wait for a
+  decision. Pay dates come from each source's cadence, so the month shows pay still expected.
+- **Transfers** between the household's own accounts are stored once (both sides, from alerts, emails or
+  statements) and never count as spending. The two accounts' kinds say what a move is: into savings, into
+  investment or retirement, or neither (between two spending accounts, or to someone in the household).
+  Saved this month ÷ income is the savings rate. Bank emails that name accounts ("TFSA", "Joint Chequing") are
+  matched to the household's accounts by name, kind and owner; `GMAIL_OWNER` says whose mailbox "You ..." is.
+- **Balances** are month-end snapshots per account (typed in, or read from a screenshot of a bank app and
+  confirmed). Net worth is assets less credit cards and loans; a month's change splits into contributions
+  (transfers in) and market return.
+- **Savings target and goals**: a monthly amount to move into savings and investments (a push when behind on a
+  chosen day), and goals (an amount by a date, from chosen accounts or kinds of account).
+
+## Categories with a role
+Some features need to know what a category is for, not its name, so they keep working after a rename:
+*usual monthly spend* (groceries, fuel: the usual amount less what's spent counts as still to come),
+*subscriptions* (a new recurring charge becomes a bill with a reminder a week before it renews) and *tipped*
+(a receipt may match a charge that includes a tip). They are switches on each category (web app → Categories).
 
 ## Not an expense
 Card payments, payment reversals and transfers between your own accounts are kept as transactions (so

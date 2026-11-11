@@ -110,10 +110,20 @@ own token, so every edit shows who made it.
 
 ### 🔍 Month-end review
 Where the money went against each budget, how it compares with your usual month, top merchants, and
-trends over the last six months.
+trends over the last six months. "Worth a look" cards flag what needs attention now.
 
 </td>
 <td valign="top">
+
+### 💰 Income, savings and net worth
+Pay from deposit alerts and screenshots, by person, with pay still to come. Moves between your own accounts
+become a savings rate; balances from a screenshot of your bank apps add up to net worth, split into what you
+put in and what the market did. Set a monthly savings target and goals with a date.
+
+</td>
+</tr>
+<tr>
+<td valign="top" colspan="2">
 
 ### 🔒 Private by design
 Self-hosted, read-only Gmail access, outbound-only push, a home-server setup with nothing exposed to the
@@ -439,6 +449,8 @@ More on the design choices: **[docs/architecture.md](docs/architecture.md)**.
 - [x] History import from any spreadsheet or CSV
 - [x] Categories in the setup wizard
 - [x] Local open models (Ollama or any OpenAI-compatible server) instead of Claude
+- [x] Income by person, transfers and a savings rate, balances and net worth, savings target and goals
+- [x] Usual grocery and fuel spend counted as still to come; subscription renewal reminders
 - [ ] Banks beyond Canada (contributions very welcome)
 - [ ] Optional encrypted off-site backups
 

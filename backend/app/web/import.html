@@ -71,8 +71,19 @@ const api = (path, opts = {}) => fetch(`/api/v1${path}`, {
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const money = a => { const n = Number(a); return `<span class="${n < 0 ? "neg" : ""}">${n < 0 ? "−" : ""}$${Math.abs(n).toFixed(2)}</span>`; };
 const $ = id => document.getElementById(id);
+let ACCOUNTS = [];
+const KIND_GROUPS = [["Savings", ["savings"]], ["Investments", ["investment", "retirement"]],
+                     ["Chequing and cards", ["chequing", "credit_card"]], ["Other", ["loan", "asset"]]];
+/** <option>s for "moved to/from another own account", grouped by kind, without the statement's own account. */
+const moveOptions = (self, verb) => KIND_GROUPS.map(([label, kinds]) => {
+  const list = ACCOUNTS.filter(a => kinds.includes(a.kind) && a.id !== self);
+  return list.length ? `<optgroup label="${verb} ${label.toLowerCase()}">${list.map(a =>
+    `<option value="move:${esc(a.id)}">${esc(a.account_name)}</option>`).join("")}</optgroup>` : "";
+}).join("");
+const pick = (value, suggested) => value === suggested ? " selected" : "";
 const LABELS = { match: "Already in the app", add: "Missing → will be added", payment: "Card payments → not an expense",
-                 unclear: "Need your decision", imported: "Already imported", outside: "Outside the chosen month" };
+                 unclear: "Need your decision", imported: "Already imported", outside: "Outside the chosen month",
+                 income: "Pay → income", deposit: "Money in: your call", transfer: "Money out: where to?" };
 
 async function start() {
   const has = !!localStorage.getItem("xpensimate_token");
@@ -80,6 +91,7 @@ async function start() {
   if (has) {
     try {
       const accounts = await api("/accounts");
+      ACCOUNTS = accounts;
       $("account").innerHTML = `<option value="">Detect from file</option>` +
         accounts.map(a => `<option value="${esc(a.id)}">${esc(a.institution)} · ${esc(a.account_name)}</option>`).join("");
     } catch (e) { $("upload-error").textContent = e.message; }
@@ -102,13 +114,13 @@ $("upload-form").onsubmit = async e => {
 
 function table(rows, extra = () => "", extraHead = "") {
   return `<div class="scroll"><table><thead><tr><th>Date</th><th>Merchant</th><th>Bank category</th>${extraHead}<th class="amt">Amount</th></tr></thead><tbody>` +
-    rows.map(r => `<tr><td>${esc(r.date)}</td><td>${esc(r.merchant)}${r.kind === "refund" ? ' <span class="muted">(refund)</span>' : ""}${r.kind === "interest" ? ' <span class="muted">(interest)</span>' : ""}${r.pending ? ' <span class="muted">(pending)</span>' : ""}</td>` +
+    rows.map(r => `<tr><td>${esc(r.date)}</td><td>${esc(r.merchant)}${r.kind === "refund" ? ' <span class="muted">(refund)</span>' : ""}${r.kind === "interest" ? ' <span class="muted">(interest)</span>' : ""}${r.kind === "deposit" ? ' <span class="muted">(deposit)</span>' : ""}${r.kind === "transfer" ? ' <span class="muted">(transfer)</span>' : ""}${r.pending ? ' <span class="muted">(pending)</span>' : ""}</td>` +
       `<td class="muted">${esc(r.bank_category)}</td>${extra(r)}<td class="amt">${money(r.amount)}</td></tr>`).join("") + "</tbody></table></div>";
 }
 
 function render(p) {
   const by = a => p.rows.filter(r => r.action === a);
-  const unclear = by("unclear");
+  const unclear = by("unclear"), deposits = by("deposit"), transfers = by("transfer");
   const replaced = p.missing.filter(m => m.replaced_by), stray = p.missing.filter(m => !m.replaced_by);
   const section = $("preview");
   section.hidden = false;
@@ -121,6 +133,26 @@ function render(p) {
           <option value="">Choose…</option>
           ${r.candidates.map(c => `<option value="match:${esc(c.id)}">Is ${esc(c.merchant)} on ${esc(c.date)} (${esc(c.source)})</option>`).join("")}
           <option value="add">Add as a new charge</option><option value="skip">Skip</option></select></td>`, "<th>Decision</th>")}` : ""}
+    ${deposits.length ? `<h2 class="warn">Money in: what is it? (${deposits.length})</h2>
+      <p class="muted">Deposits that aren't pay. Income counts as money earned; money back counts against spending (someone
+        paying you back for something you bought); a transfer is your own money moving and isn't counted at all.</p>
+      ${table(deposits, r => `<td><select data-index="${r.index}" class="decision">
+          <option value="">Choose…</option><option value="income">Income</option>
+          <option value="add">Money back (counts against spending)</option>
+          ${moveOptions(p.account_id, "From").replace(`value="${esc(r.suggested ?? "")}"`, `value="${esc(r.suggested ?? "")}" selected`)}
+          <option value="transfer"${pick("transfer", r.suggested)}>From someone in the household / own money (not counted)</option>
+          <option value="skip">Skip</option></select></td>`, "<th>Decision</th>")}` : ""}
+    ${transfers.length ? `<h2 class="warn">Money out: where did it go? (${transfers.length})</h2>
+      <p class="muted">Transfers and e-transfers sent. To one of your savings or investment accounts counts as saving;
+        between people in the household isn&rsquo;t counted; paying someone for something is spending. Suggestions are filled in
+        from what you chose before.</p>
+      ${table(transfers, r => `<td><select data-index="${r.index}" class="decision">
+          <option value="">Choose…</option>
+          ${moveOptions(p.account_id, "To").replace(`value="${esc(r.suggested ?? "")}"`, `value="${esc(r.suggested ?? "")}" selected`)}
+          <option value="transfer"${pick("transfer", r.suggested)}>To someone in the household / own money (not counted)</option>
+          <option value="add">Spending: paid someone for something</option>
+          <option value="skip">Skip</option></select></td>`, "<th>Where to</th>")}` : ""}
+    ${by("income").length ? `<h2>Pay → recorded as income (${by("income").length})</h2>${table(by("income"))}` : ""}
     ${by("add").length ? `<h2>Missing from the app → will be added (${by("add").length})</h2>
       <p class="muted">Categorized with your rules, your history, then the AI model.</p>${table(by("add"))}` : ""}
     ${by("payment").length ? `<h2>Card payments → recorded as not an expense (${by("payment").length})</h2>
@@ -143,8 +175,8 @@ function render(p) {
 
   const decisions = () => Object.fromEntries([...section.querySelectorAll(".decision")].filter(s => s.value).map(s => [s.dataset.index, s.value]));
   const update = () => {
-    const left = unclear.length - Object.keys(decisions()).length;
-    const nothing = !p.rows.some(r => ["add", "payment", "match", "unclear"].includes(r.action));
+    const left = unclear.length + deposits.length + transfers.length - Object.keys(decisions()).length;
+    const nothing = !p.rows.some(r => ["add", "payment", "match", "unclear", "income", "deposit", "transfer"].includes(r.action));
     $("commit").disabled = left > 0 || nothing;
     $("commit-note").textContent = left > 0 ? `Decide ${left} more row(s) first.` : nothing ? "Nothing to import." : "";
   };
@@ -168,7 +200,7 @@ async function poll(id, total) {
   if (s.status === "importing") return setTimeout(() => poll(id, total), 1000);
   const r = s.result || {};
   $("progress").innerHTML = s.status === "done"
-    ? `<p><b>Done.</b> Added ${r.added ?? 0}, confirmed ${r.matched ?? 0}, card payments ${r.payment ?? 0}, skipped ${r.skipped ?? 0}${r.replaced ? `, replaced charges removed ${r.replaced}` : ""}.</p>`
+    ? `<p><b>Done.</b> Added ${r.added ?? 0}${r.income ? `, income ${r.income}` : ""}${r.transfer ? `, moves between accounts ${r.transfer}` : ""}, confirmed ${r.matched ?? 0}, card payments ${r.payment ?? 0}, skipped ${r.skipped ?? 0}${r.replaced ? `, replaced charges removed ${r.replaced}` : ""}.</p>`
     : `<p class="err">The import stopped: ${esc(r.error ?? "unknown error")}. Rows before it were saved; importing the file again picks up the rest.</p>`;
 }
 start();

@@ -28,8 +28,35 @@ PROSE = re.compile(
 )
 
 
+# Deposit alerts into a chequing or savings account (Sam's pay lands in RBC Chequing). No real sample yet:
+# any subject naming a deposit is read; the account comes from its masked number, the payer from a
+# Description/From line or "from X" in the text. One that can't be read is kept as unparsed to fix against.
+DEPOSIT_SUBJECT = re.compile(r"\bdeposit", re.IGNORECASE)
+NOT_A_DEPOSIT = re.compile(r"statement|sign[- ]?in|code|password|offer|reward|e-?transfer|request", re.IGNORECASE)
+PAYER_PROSE = re.compile(r"\bfrom\s+(?P<payer>[A-Z][\w&'./ -]{1,60}?)(?=\s+(?:has|was|is|on|to|into)\b|[.,]|$)",
+                         re.MULTILINE)
+
+
+def is_deposit(subject: str) -> bool:
+    return bool(DEPOSIT_SUBJECT.search(subject)) and not NOT_A_DEPOSIT.search(subject)
+
+
 def is_transaction(subject: str) -> bool:
-    return bool(SUBJECTS.search(subject)) and not NOT_A_PURCHASE.search(subject)
+    return is_deposit(subject) or (bool(SUBJECTS.search(subject)) and not NOT_A_PURCHASE.search(subject))
+
+
+def parse_deposit(text: str) -> ParsedAlert | None:
+    amount_text = field(text, r"(?:Deposit |Transaction )?Amount")
+    amount = parse_amount(amount_text or text)
+    if amount is None or amount <= 0:
+        return None
+    payer = field(text, r"(?:Transaction |Deposit )?Description|From|Payer|Depositor")
+    if not payer and (prose := PAYER_PROSE.search(text)):
+        payer = prose["payer"]
+    account = field(text, r"Account|To") or text
+    suffix = MASKED_CARD.search(account) or MASKED_CARD.search(text)
+    return ParsedAlert(amount=abs(amount), merchant=clean_merchant(payer or "Deposit"), account_id="",
+                       card_suffix=suffix[1] if suffix else None, income=True)
 
 
 def _plain(body: str) -> str:
@@ -47,6 +74,8 @@ def field(text: str, label: str) -> str | None:
 
 def parse(subject: str, body: str) -> ParsedAlert | None:
     text = _plain(body)
+    if is_deposit(subject):
+        return parse_deposit(text)
     if DEBIT.search(text):
         return None
     amount_text = field(text, r"(?:Purchase |Transaction |Refund )?Amount")

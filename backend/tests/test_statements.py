@@ -257,21 +257,21 @@ def _row(date, merchant, amount, kind="purchase", pending=False):
 
 
 def test_screenshot_is_read_and_added_under_its_own_source(client, db, screenshot):
-    alert = add_alert(db, "WESTSIDE MUAY THAI", "98.60", "2026-11-04", "ws_credit")
+    alert = add_alert(db, "NORTHSIDE BOXING", "75.40", "2026-11-04", "ws_credit")
     resp = screenshot(client, "ws_credit", [
-        _row("2026-11-04", "Westside Muay Thai", 98.60),
+        _row("2026-11-04", "Northside Boxing", 75.40),
         _row("2026-11-03", "#32-153 Nepean Library", 2.78),
-        _row("2026-11-05", "Shell Ep On C81503", 40.00, pending=True),
+        _row("2026-11-05", "Shell Ep On C41503", 40.00, pending=True),
         _row("2026-10-30", "Payment", 500, kind="payment"),
     ], month="2026-09")  # the month is ignored for screenshots
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert (body["bank_format"], body["account_id"], body["missing"]) == ("screenshot", "ws_credit", [])
     rows = by_merchant(body)
-    assert rows["Westside Muay Thai"]["action"] == "match" and rows["Westside Muay Thai"]["transaction"]["id"] == str(alert.id)
+    assert rows["Northside Boxing"]["action"] == "match" and rows["Northside Boxing"]["transaction"]["id"] == str(alert.id)
     assert (rows["#32-153 Nepean Library"]["action"], rows["#32-153 Nepean Library"]["amount"]) == ("add", "2.78")
     assert (rows["Payment"]["action"], rows["Payment"]["amount"]) == ("payment", "-500.00")
-    assert (rows["Shell Ep On C81503"]["action"], rows["Shell Ep On C81503"]["pending"]) == ("add", True)
+    assert (rows["Shell Ep On C41503"]["action"], rows["Shell Ep On C41503"]["pending"]) == ("add", True)
 
     client.post(f"/api/v1/statements/{body['id']}/commit", json={})
     db.expire_all()

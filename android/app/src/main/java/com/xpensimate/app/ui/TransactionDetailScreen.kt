@@ -34,6 +34,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xpensimate.app.data.Api
+import com.xpensimate.app.data.EARNERS
+import com.xpensimate.app.data.INCOME_KINDS
 import com.xpensimate.app.data.SplitLine
 import com.xpensimate.app.data.SplitRequest
 import com.xpensimate.app.data.Taxonomy
@@ -106,7 +108,9 @@ fun TransactionDetailScreen(vm: TransactionDetailViewModel, onOpenReceipt: (Stri
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(txn.merchant, style = MaterialTheme.typography.headlineSmall)
-                Text(txn.amount.money(), style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.SemiBold)
+                Text(if (txn.isIncome) "+${txn.amount.money()}" else txn.amount.money(),
+                    style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.SemiBold,
+                    color = if (txn.isIncome) ChartColors.good else MaterialTheme.colorScheme.onSurface)
                 Text(
                     parseInstant(txn.timestamp).atZone(zone).format(detailTime) +
                         (txn.accountId?.let { " · $it" } ?: ""),
@@ -120,7 +124,11 @@ fun TransactionDetailScreen(vm: TransactionDetailViewModel, onOpenReceipt: (Stri
                     Text("Last changed by $it", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (txn.excluded) {
+                if (txn.isIncome) {
+                    AssistChip(onClick = {}, label = { Text("Income · not spending") })
+                } else if (txn.isTransfer) {
+                    AssistChip(onClick = {}, label = { Text("Moved: ${txn.moveText()} · not spending") })
+                } else if (txn.excluded) {
                     Text("Not counted as an expense", color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.titleSmall)
                 } else {
@@ -131,7 +139,23 @@ fun TransactionDetailScreen(vm: TransactionDetailViewModel, onOpenReceipt: (Stri
                 Text("Note", style = MaterialTheme.typography.titleMedium)
                 NoteEditor(txn.note, vm.saving, vm::saveNote)
                 val taxonomy = vm.taxonomy
-                if (taxonomy != null) {
+                if (txn.isIncome) {
+                    // Income: its kind and who earned it. No rules, no "not an expense", no split.
+                    SectionTitle("Kind", if (txn.categoryIsManual) "Manual" else "Auto")
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        INCOME_KINDS.forEach { c ->
+                            FilterChip(selected = txn.category == c, enabled = !vm.saving,
+                                onClick = { if (txn.category != c) vm.update(category = c) }, label = { Text(c) })
+                        }
+                    }
+                    SectionTitle("Who earned it", if (txn.purposeIsManual) "Manual" else "Auto")
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        EARNERS.forEach { p ->
+                            FilterChip(selected = txn.purpose == p, enabled = !vm.saving,
+                                onClick = { if (txn.purpose != p) vm.update(purpose = p) }, label = { Text(p) })
+                        }
+                    }
+                } else if (taxonomy != null) {
                     SectionTitle("What", if (txn.categoryIsManual) "Manual" else "Auto · ${txn.categorizedBy}")
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         taxonomy.categories.forEach { c ->
@@ -156,14 +180,21 @@ fun TransactionDetailScreen(vm: TransactionDetailViewModel, onOpenReceipt: (Stri
                     }
                 }
 
-                OutlinedButton(
+                if (!txn.isIncome) OutlinedButton(
                     onClick = { vm.setExcluded(!txn.excluded) },
                     enabled = !vm.saving,
                     colors = if (txn.excluded) ButtonDefaults.outlinedButtonColors()
                     else ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text(if (txn.excluded) "Count as an expense again" else "Not an expense (transfer, card payment…)") }
+                ) {
+                    Text(when {
+                        txn.isTransfer -> "Not a transfer: count as spending"
+                        txn.excluded -> "Count as an expense again"
+                        else -> "Not an expense (transfer, card payment…)"
+                    })
+                }
 
+                if (txn.isIncome) return@Column
                 HorizontalDivider()
                 val receiptId = txn.receiptId
                 Row(verticalAlignment = Alignment.CenterVertically) {

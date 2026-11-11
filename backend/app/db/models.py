@@ -47,7 +47,13 @@ class CategoryRow(Base):
 
     name: Mapped[str] = mapped_column(String(64), primary_key=True)
     sort_order: Mapped[int] = mapped_column(Integer)
+    # What the category is for, so features don't depend on its name (alembic 0022 explains each).
+    estimated: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    subscriptions: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    tipped: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = _created_at()
+
+    ROLES = ("estimated", "subscriptions", "tipped")
 
 
 class Account(Base):
@@ -88,6 +94,7 @@ class Transaction(Base):
         Index("idx_transactions_timestamp", "timestamp"),
         Index("idx_transactions_reconciliation", "reconciliation_status", "is_itemized"),
         Index("idx_transactions_purpose", "purpose"),
+        Index("idx_transactions_txn_type", "txn_type", "timestamp"),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -95,8 +102,10 @@ class Transaction(Base):
     source: Mapped[str] = mapped_column(String(32))
     source_ref: Mapped[str | None] = mapped_column(String(255))
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    # Signed: purchases are positive, refunds negative.
+    # Signed: purchases are positive, refunds negative. Income is positive (money in).
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    # PURCHASE | REFUND | INCOME | TRANSFER. Income and transfers are always excluded (they aren't spending).
+    # Income's category is an income kind (Salary, Other income) and its purpose is who earned it.
     txn_type: Mapped[str] = mapped_column(String(16), server_default="PURCHASE")
     currency: Mapped[str] = mapped_column(String(3), default=lambda: load_household().currency, server_default="CAD")
     merchant_raw: Mapped[str] = mapped_column(String(255))
@@ -121,6 +130,13 @@ class Transaction(Base):
     recurring_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("recurring_expenses.id", ondelete="SET NULL"), index=True
     )
+    # Set when this income is a paycheque of a known income source.
+    income_source_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("income_sources.id", ondelete="SET NULL"), index=True
+    )
+    # A TRANSFER moves `amount` from account_id to this account (both the household's own). None: the other side
+    # isn't known (e.g. an e-transfer between Alex and Sam). See app/services/savings.py.
+    counterpart_account_id: Mapped[str | None] = mapped_column(ForeignKey("accounts.id"))
     # Who last changed it by hand (whose API token), or entered it (a bill marked paid). None: only automation.
     edited_by: Mapped[str | None] = mapped_column(String(32))
     # The household's own words on what this was (free text, for remembering and planning).
@@ -310,6 +326,82 @@ class RecurringExpense(Base):
     # When it was last switched off; a charge after this means it didn't really stop.
     deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     origin: Mapped[str] = mapped_column(String(16), server_default="user")  # detected | user
+    # The due date whose "renews soon" reminder was last sent, so each one goes out once.
+    reminded_due: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = _created_at()
+
+
+class IncomeSource(Base):
+    """A regular paycheque: who earns it, where it lands and when; drives "income still expected"."""
+
+    __tablename__ = "income_sources"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(128))
+    # Who earns it (a purpose: Alex, Sam or Shared).
+    earner: Mapped[str] = mapped_column(String(32))
+    # The account it lands in; None matches a deposit into any account.
+    account_id: Mapped[str | None] = mapped_column(ForeignKey("accounts.id"))
+    # Whole-word pattern naming the payer on the deposit ("NORTHWIND", "PAYROLL").
+    payer_pattern: Mapped[str] = mapped_column(String(128))
+    # Net pay; a deposit within amount_tolerance of it is this paycheque.
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    amount_tolerance: Mapped[Decimal] = mapped_column(Numeric(4, 2), server_default="0.25")
+    cadence: Mapped[str] = mapped_column(String(16))  # weekly | biweekly | semimonthly | monthly
+    # A known pay date; biweekly and weekly repeat from it, monthly keeps its day. Semimonthly is the 15th and
+    # the last day of the month.
+    anchor_date: Mapped[date] = mapped_column(Date)
+    active: Mapped[bool] = mapped_column(Boolean, server_default="true")
+    created_at: Mapped[datetime] = _created_at()
+
+
+class BalanceSnapshot(Base):
+    """An account's balance on a day (what the bank app showed): the stocks behind net worth. A credit card or loan
+    balance is what is owed, as a positive number. See app/services/balances.py."""
+
+    __tablename__ = "balance_snapshots"
+    __table_args__ = (UniqueConstraint("account_id", "as_of", name="uq_balance_snapshots_day"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id"), index=True)
+    as_of: Mapped[date] = mapped_column(Date)
+    balance: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    # manual | screenshot | static (a fixed value carried forward, like the loan to Sam's parents)
+    source: Mapped[str] = mapped_column(String(16), server_default="manual")
+    note: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str | None] = mapped_column(String(32))
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
+class SavingsTarget(Base):
+    """How much to move into savings and investments each month (the household's: scope "household"). Reported in
+    reverse of a budget: behind target is the alert (app/services/goals.py)."""
+
+    __tablename__ = "savings_targets"
+
+    scope: Mapped[str] = mapped_column(String(32), primary_key=True)
+    monthly_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    # On or after this day of the month, an alert fires if less than warning_percent of the target is saved.
+    alert_day: Mapped[int] = mapped_column(Integer, server_default="25")
+    warning_percent: Mapped[Decimal] = mapped_column(Numeric(5, 2), server_default="80.00")
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
+class SavingsGoal(Base):
+    """An amount to have by a date, counted from the balances of the accounts it covers (by kind, or by id)."""
+
+    __tablename__ = "savings_goals"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(128))
+    target_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    target_date: Mapped[date] = mapped_column(Date)
+    # Accounts it counts: every account of these kinds (e.g. ["savings"]) plus these account ids.
+    account_kinds: Mapped[list[str]] = mapped_column(JSONB, server_default="[]")
+    account_ids: Mapped[list[str]] = mapped_column(JSONB, server_default="[]")
+    active: Mapped[bool] = mapped_column(Boolean, server_default="true")
     created_at: Mapped[datetime] = _created_at()
 
 

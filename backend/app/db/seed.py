@@ -3,7 +3,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.core.household import load_household
-from app.core.taxonomy import DEFAULT_CATEGORIES
+from app.core.taxonomy import DEFAULT_CATEGORIES, STARTER_ROLES
 from app.db.base import SessionLocal
 from app.db.models import Account, CategorizationRule, CategoryRow
 
@@ -68,7 +68,8 @@ def sync_accounts(db: Session) -> None:
 def seed(db: Session) -> None:
     sync_accounts(db)
     if db.scalar(select(CategoryRow.name).limit(1)) is None:
-        db.add_all(CategoryRow(name=n, sort_order=i) for i, n in enumerate(DEFAULT_CATEGORIES))
+        db.add_all(CategoryRow(name=n, sort_order=i, **{role: True for role in STARTER_ROLES.get(n, ())})
+                   for i, n in enumerate(DEFAULT_CATEGORIES))
     # Starter rules go in once; deleting some keeps them deleted (re-added only if all are gone).
     if db.scalar(select(CategorizationRule.id).where(CategorizationRule.origin == "starter").limit(1)) is None:
         db.add_all(CategorizationRule(**rule) for rule in _starter_rules())

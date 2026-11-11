@@ -19,6 +19,17 @@ class ParsedAlert:
     card_suffix: str | None = None
     # The card as the alert names it ("Wealthsimple VIP"), for when the last four digits are not the card's own.
     card_name: str | None = None
+    # Money in (a deposit; `merchant` is the payer, `amount` positive). Stored as income only if it is pay
+    # (app/services/income.py).
+    income: bool = False
+    # A move between two of the household's own accounts, from account_id to transfer_to.
+    transfer: bool = False
+    transfer_to: str | None = None
+    # When the alert names the accounts rather than their ids ("TFSA", "Joint Chequing") and who made the move,
+    # the household's accounts are matched by name, kind and owner (app/services/accounts.py: account_named).
+    from_name: str | None = None
+    to_name: str | None = None
+    person: str | None = None
 
 
 def parse_amount(text: str) -> Decimal | None:

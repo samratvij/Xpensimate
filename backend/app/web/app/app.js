@@ -46,8 +46,16 @@ const clamp01 = x => Math.max(0, Math.min(1, x || 0));
 const badge = (name, size = "") => `<span class="badge ${size}" aria-hidden="true">${ICONS[name] ?? PERSON_ICONS[personLines()[name]] ?? (name ? "❔" : "↔️")}</span>`;
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const merchant = t => t.merchant_normalized || t.merchant_raw;
+const isIncome = t => t.txn_type === "INCOME";
+const isTransfer = t => t.txn_type === "TRANSFER";
+const accountName = id => state.accounts?.find(a => a.id === id)?.account_name ?? id;
+/** "PC Money Account → PC Savings"; an unknown side reads as someone in the household or own money. */
+const moveText = t => `${t.account_id ? accountName(t.account_id) : "Own money"} → ${t.counterpart_account_id ? accountName(t.counterpart_account_id) : (state.taxonomy?.people ?? []).join(" / ") || "Someone in the household"}`;
+const INCOME_KINDS = ["Salary", "Other income"];
+// Who income can belong to: the household's people, or Shared. Needs the taxonomy loaded.
+const earners = () => [...(state.taxonomy?.people ?? []), "Shared"];
 /** A guess worth a glance: picked by Claude (or nothing) with low confidence, never confirmed. Same rule as Android. */
-const needsCheck = t => !t.excluded && !t.category_is_manual && !t.purpose_is_manual &&
+const needsCheck = t => !t.excluded && !isIncome(t) && !t.category_is_manual && !t.purpose_is_manual &&
   (t.categorized_by === "none" || (t.categorized_by === "llm" && Number(t.inference_confidence) < 0.6));
 
 // Months are "YYYY-MM" in the browser's time zone.
@@ -123,11 +131,18 @@ const state = {
   purpose: null,
   txMonth: thisMonth(),
   billsMonth: thisMonth(),
+  incomeMonth: thisMonth(),
   // Month-end review defaults to the month that just ended.
   reviewMonth: shiftMonth(thisMonth(), -1),
+  balancesMonth: thisMonth(),
   insightsExpanded: false,
   tab: "home",
 };
+
+async function accounts() {
+  if (!state.accounts) state.accounts = await api("/accounts").catch(() => []);
+  return state.accounts;
+}
 
 async function taxonomy(fresh = false) {
   if (!state.taxonomy || fresh) state.taxonomy = await api("/taxonomy");
@@ -187,11 +202,13 @@ function progress(spent, projected, limit, { over = false, warn = false } = {}) 
 }
 
 function txRow(t) {
-  const sub = t.excluded ? "Not an expense" : t.is_itemized ? `${t.budget_line} · itemized` : t.budget_line;
-  const amount = Number(t.amount) < 0
-    ? `<span class="amt refund">+${money(-t.amount)}</span>` : `<span class="amt">${money(t.amount)}</span>`;
-  return `<a class="item ${t.excluded ? "dim" : ""}" href="#/txn/${t.id}">
-    ${badge(t.excluded ? "" : t.category)}
+  const income = isIncome(t);
+  const sub = income ? `${t.category} · ${t.purpose}` : isTransfer(t) ? `Moved: ${moveText(t)}` : t.excluded ? "Not an expense"
+    : t.is_itemized ? `${t.budget_line} · itemized` : t.budget_line;
+  const amount = income || Number(t.amount) < 0
+    ? `<span class="amt refund">+${money(Math.abs(t.amount))}</span>` : `<span class="amt">${money(t.amount)}</span>`;
+  return `<a class="item ${t.excluded && !income ? "dim" : ""}" href="#/txn/${t.id}">
+    ${income ? `<span class="badge" aria-hidden="true">💰</span>` : badge(t.excluded ? "" : t.category)}
     <div class="grow"><div class="ellipsis">${esc(merchant(t))}</div><div class="sub ellipsis">${esc(sub)}</div>
       ${t.note ? `<div class="sub ellipsis note-line">📝 ${esc(t.note)}</div>` : ""}</div>
     ${needsCheck(t) ? `<span class="pill check">Check</span>` : ""}${amount}</a>`;
@@ -243,12 +260,13 @@ function noteBox(container, value, onSave, { placeholder = NOTE_HINT } = {}) {
 async function homeScreen(ctx) {
   const m = state.homeMonth, who = state.purpose;
   const q = who ? `&purpose=${enc(who)}` : "";
-  const [summary, trend, tax, insights] = await Promise.all([
+  const [summary, trend, tax, insights, worth] = await Promise.all([
     api(`/summary?month=${m}${q}`),
     api(`/trends?months=${TREND_MONTHS}${q}`).catch(() => []),
     taxonomy(),
     // Insights are about the current month only.
     m === thisMonth() ? api(`/insights${who ? `?purpose=${enc(who)}` : ""}`).catch(() => []) : [],
+    who ? null : api(`/balances?month=${m}`).catch(() => null),
   ]);
   if (!ctx.alive()) return;
 
@@ -268,24 +286,49 @@ async function homeScreen(ctx) {
     <div><span class="big">${money(summary.total_spent)}</span>${budget > 0 ? `<span class="of"> of ${money(budget)}</span>` : ""}</div>
     ${budget > 0 ? progress(summary.total_spent, projected, budget, { over: summary.total_spent > budget, warn: projected > budget }) : ""}
     <div class="stats">
-      ${summary.total_expected > 0 ? `<div class="stat"><div class="k">Bills still due</div><div class="v">${money(summary.total_expected)}</div></div>
-        <div class="stat"><div class="k">Projected</div><div class="v">${money(projected)}</div></div>` : ""}
+      ${summary.total_bills_due > 0 ? `<div class="stat"><div class="k">Bills still due</div><div class="v">${money(summary.total_bills_due)}</div></div>` : ""}
+      ${summary.total_estimated > 0 ? `<div class="stat"><div class="k">Usual spend to come</div><div class="v">${money(summary.total_estimated)}</div></div>` : ""}
+      ${summary.total_expected > 0 ? `<div class="stat"><div class="k">Projected</div><div class="v">${money(projected)}</div></div>` : ""}
       ${compare}
     </div></div>`;
+
+  const inc = summary.income, sav = summary.savings;
+  let incomeCard = "";
+  if (inc && (inc.received > 0 || inc.expected > 0)) {
+    const people = Object.entries(inc.by_person);
+    const projectedLeft = current && inc.expected > 0;
+    const left = projectedLeft ? inc.projected_left : inc.left_after_spending;
+    incomeCard = `<a class="card" href="#/income" data-income style="display:block;color:inherit">
+      <div class="row"><span class="badge" aria-hidden="true">💰</span><div class="grow"><div style="font-weight:600">Income</div>
+        <div class="small muted">${esc(people.map(([p, a]) => `${p} ${money(a)}`).join(" · ") || "No pay received yet")}</div></div>
+        ${inc.received > 0 ? `<span class="amt refund">+${money(inc.received)}</span>` : `<span class="amt muted">${money(0)}</span>`}</div>
+      <div class="stats" style="margin-top:6px">
+        ${inc.expected > 0 ? `<div class="stat"><div class="k">Pay still expected</div><div class="v">${money(inc.expected)}</div></div>` : ""}
+        <div class="stat"><div class="k">${projectedLeft ? "Left after spending (projected)" : "Left after spending"}</div>
+          <div class="v ${left < 0 ? "danger" : ""}">${left < 0 ? "−" : ""}${money(Math.abs(left))}</div></div>
+        ${sav && sav.rate != null ? `<div class="stat"><div class="k">Savings rate</div><div class="v ${sav.rate < 0 ? "danger" : ""}">${sav.rate}%</div></div>` : ""}
+      </div>
+      ${sav && (sav.to_savings || sav.from_savings || sav.to_investments || sav.from_investments) ? `<div class="small muted" style="margin-top:6px">
+        Moved: ${[sav.net_to_savings ? `${sav.net_to_savings < 0 ? "−" : ""}${money(Math.abs(sav.net_to_savings))} to savings` : "",
+                  sav.net_to_investments ? `${sav.net_to_investments < 0 ? "−" : ""}${money(Math.abs(sav.net_to_investments))} to investments` : ""]
+                 .filter(Boolean).join(" · ") || "in and out evenly"}</div>` : ""}</a>`;
+  } else if (!who || earners().includes(who)) {
+    incomeCard = `<a class="card small muted" href="#/income" data-income style="display:block">💰 No income recorded for this month yet ›</a>`;
+  }
 
   let trendCard = "";
   if (trend.length) {
     const peak = Math.max(1, ...trend.map(t => t.spent + t.expected));
     const shown = trend.find(t => t.month === m);
     trendCard = `<div class="card"><h3>Last ${TREND_MONTHS} months</h3>
-      <div class="small muted">${shown ? `${esc(monthTitle(m))}: ${money(shown.spent)} spent${shown.expected > 0 ? ` + ${money(shown.expected)} bills due` : ""}` : "Tap a month to open it"}</div>
+      <div class="small muted">${shown ? `${esc(monthTitle(m))}: ${money(shown.spent)} spent${shown.expected > 0 ? ` + ${money(shown.expected)} still expected` : ""}` : "Tap a month to open it"}</div>
       <div class="trend" role="img" aria-label="${esc(trend.map(t => `${monthShort(t.month)} ${money(t.spent)}`).join(", "))}">
         ${trend.map(t => `<button data-month="${t.month}" aria-label="${esc(monthTitle(t.month))}">
           ${t.expected > 0 ? `<span class="bar due" style="height:${t.expected / peak * 100}%"></span>` : ""}
           ${t.spent > 0 ? `<span class="bar" style="height:${t.spent / peak * 100}%"></span>` : ""}</button>`).join("")}
       </div>
       <div class="trend-labels">${trend.map(t => `<span class="${t.month === m ? "on" : ""}">${esc(monthShort(t.month))}</span>`).join("")}</div>
-      ${trend.some(t => t.expected > 0) ? `<div class="legend"><span><i></i>Spent</span><span><i class="due"></i>Bills still due</span></div>` : ""}
+      ${trend.some(t => t.expected > 0) ? `<div class="legend"><span><i></i>Spent</span><span><i class="due"></i>Still expected</span></div>` : ""}
     </div>`;
   }
 
@@ -300,12 +343,12 @@ async function homeScreen(ctx) {
     b.projected - a.projected);
   const lineCards = lines.length ? lines.map(l => {
     const notes = [];
-    if (l.expected > 0) notes.push(`+${money(l.expected)} bills due`);
+    notes.push(...stillToCome(l));
     if (l.monthly_limit) notes.push(`${pct(l.spent / l.monthly_limit * 100)} of ${money(l.monthly_limit)}`);
     let status = "";
     if (l.monthly_limit) {
       if (l.over_limit) status = `<div class="note over">Over budget by ${money(l.spent - l.monthly_limit)}</div>`;
-      else if (l.projected_over_limit) status = `<div class="note">On track to go over with bills still due</div>`;
+      else if (l.projected_over_limit) status = `<div class="note">On track to go over with what's still to come</div>`;
       else if (l.over_warning) status = `<div class="note">Nearing the budget</div>`;
     }
     const href = `#/line/${enc(l.category)}/${m}${who ? `?purpose=${enc(who)}` : ""}`;
@@ -317,9 +360,11 @@ async function homeScreen(ctx) {
       ${status}</a>`;
   }).join("") : `<p class="muted center">No spending this month yet.</p>`;
 
-  ctx.view.innerHTML = monthBar(m) + `<div class="stack">${insightsSection(insights)}${hero}${trendCard}${chips}${lineCards}</div>`;
+  ctx.view.innerHTML = monthBar(m) + `<div class="stack">${insightsSection(insights)}${hero}${incomeCard}${netWorthCard(worth)}${trendCard}${chips}${lineCards}</div>`;
   bindMonthBar(ctx.view, "homeMonth");
   bindInsights(ctx.view, insights, m, who);
+  $$("[data-income]", ctx.view).forEach(a => a.onclick = () => { state.incomeMonth = m; });
+  $$("[data-worth]", ctx.view).forEach(a => a.onclick = () => { state.balancesMonth = m; });
   $$("[data-month]", ctx.view).forEach(b => b.onclick = () => { state.homeMonth = b.dataset.month; route(); });
   $$("[data-who]", ctx.view).forEach(b => b.onclick = () => { state.purpose = b.dataset.who || null; route(); });
 }
@@ -384,6 +429,14 @@ function bindInsights(view, insights, month, who) {
   if (moreBtn) moreBtn.onclick = () => { state.insightsExpanded = !state.insightsExpanded; route(); };
 }
 
+// What a line still expects this month: bills not yet paid, and the rest of the usual spend on a necessity.
+function stillToCome(row) {
+  const out = [];
+  if (row.bills_due > 0) out.push(`+${money(row.bills_due)} bills due`);
+  if (row.estimated > 0) out.push(`~${money(row.estimated)} more at the usual pace`);
+  return out;
+}
+
 async function lineScreen(ctx, line, m) {
   const who = ctx.query.get("purpose");
   ctx.title(line);
@@ -402,7 +455,7 @@ async function lineScreen(ctx, line, m) {
     <div style="margin-top:10px"><span class="big" style="font-size:28px;font-weight:700">${money(spend?.spent ?? 0)}</span>
       ${spend?.monthly_limit ? `<span class="muted"> of ${money(spend.monthly_limit)}</span>` : ""}</div>
     ${spend?.monthly_limit ? progress(spend.spent, spend.projected, spend.monthly_limit, { over: spend.over_limit, warn: spend.over_warning || spend.projected_over_limit }) : ""}
-    ${spend?.expected > 0 ? `<div class="small muted" style="margin-top:8px">+${money(spend.expected)} in bills still due · ${money(spend.projected)} projected</div>` : ""}
+    ${spend?.expected > 0 ? `<div class="small muted" style="margin-top:8px">${esc([...stillToCome(spend), `${money(spend.projected)} projected`].join(" · "))}</div>` : ""}
   </div>`;
   const dueHtml = due.length ? `<div class="section-label">Bills still due</div><div class="card flush list">${due.map(p =>
     `<div class="item static"><div class="grow"><div>${esc(p.recurring.name)}</div>
@@ -435,7 +488,35 @@ async function transactionScreen(ctx, id) {
     if (ctx.alive()) draw();
   };
 
+  function drawIncome() {
+    ctx.title(merchant(txn));
+    ctx.view.innerHTML = `<div class="stack">
+      <div class="detail-head">
+        <div class="merchant">${esc(merchant(txn))}</div>
+        <div class="total refund">+${money(txn.amount)}</div>
+        <div class="muted">${esc(fmtFull(txn.timestamp))}${txn.account_id ? ` · ${esc(txn.account_id)}` : ""}</div>
+        ${txn.edited_by ? `<div class="small muted">Last changed by ${esc(txn.edited_by)}</div>` : ""}
+      </div>
+      <div><span class="chip" style="cursor:default">Income · not spending</span></div>
+      ${error ? `<div class="err">${esc(error)}</div>` : ""}
+      <div class="card"><h3 style="margin-bottom:8px">Note</h3><div data-note></div></div>
+      <div class="card stack">
+        <h3>Kind</h3><div class="chips">${INCOME_KINDS.map(c =>
+          `<button class="chip ${txn.category === c ? "on" : ""}" data-cat="${esc(c)}" ${saving ? "disabled" : ""}>${esc(c)}</button>`).join("")}</div>
+        <h3>Who earned it</h3><div class="chips">${earners().map(p =>
+          `<button class="chip ${txn.purpose === p ? "on" : ""}" data-who="${esc(p)}" ${saving ? "disabled" : ""}>${esc(p)}</button>`).join("")}</div>
+      </div></div>`;
+    $$("[data-cat]", ctx.view).forEach(b => b.onclick = () => { if (txn.category !== b.dataset.cat) save({ category: b.dataset.cat }); });
+    $$("[data-who]", ctx.view).forEach(b => b.onclick = () => { if (txn.purpose !== b.dataset.who) save({ purpose: b.dataset.who }); });
+    noteBox($("[data-note]", ctx.view), txn.note, async text => {
+      txn = await api(`/transactions/${id}`, { method: "PATCH", body: { note: text } });
+      toast(text ? "Note saved" : "Note removed");
+      if (ctx.alive()) draw();
+    });
+  }
+
   function draw() {
+    if (isIncome(txn)) return drawIncome();
     ctx.title(merchant(txn));
     const items = txn.items || [];
     const itemsTitle = txn.receipt_id ? "Receipt lines" : items.length ? `Split into ${items.length} items` : "Items";
@@ -449,7 +530,8 @@ async function transactionScreen(ctx, id) {
         ${txn.merchant_raw !== merchant(txn) ? `<div class="small muted">${esc(txn.merchant_raw)}</div>` : ""}
         ${txn.edited_by ? `<div class="small muted">Last changed by ${esc(txn.edited_by)}</div>` : ""}
       </div>
-      ${txn.excluded ? `<div class="err" style="font-weight:600">Not counted as an expense</div>`
+      ${isTransfer(txn) ? `<div><span class="chip" style="cursor:default">Moved: ${esc(moveText(txn))} · not spending</span></div>`
+        : txn.excluded ? `<div class="err" style="font-weight:600">Not counted as an expense</div>`
         : `<div><span class="chip" style="cursor:default">Budget line: ${esc(txn.budget_line)}</span></div>`}
       ${error ? `<div class="err">${esc(error)}</div>` : ""}
       <div class="card"><h3 style="margin-bottom:8px">Note</h3><div data-note></div></div>
@@ -467,7 +549,7 @@ async function transactionScreen(ctx, id) {
         </label>
       </div>
       <button class="btn ${txn.excluded ? "secondary" : "danger"}" data-exclude ${saving ? "disabled" : ""}>
-        ${txn.excluded ? "Count as an expense again" : "Not an expense (transfer, card payment…)"}</button>
+        ${isTransfer(txn) ? "Not a transfer: count as spending" : txn.excluded ? "Count as an expense again" : "Not an expense (transfer, card payment…)"}</button>
       <div class="card">
         <div class="row"><h3 class="grow">${itemsTitle}</h3>${itemsAction}</div>
         ${!items.length && !txn.receipt_id ? `<div class="small muted">Bought several things for different people or budgets? Split the charge so each counts on its own.</div>` : ""}
@@ -814,6 +896,353 @@ function markPaid(payment) {
   };
 }
 
+const PAY_STATUS = { received: `<div class="small ok">✓ Received</div>`, upcoming: `<div class="small muted">Upcoming</div>`,
+                     late: `<div class="small danger">Not seen yet</div>` };
+
+async function incomeScreen(ctx) {
+  const m = state.incomeMonth;
+  const [inc, accounts, , sources] = await Promise.all([api(`/income?month=${m}`), api("/accounts"), taxonomy(),
+                                                         api("/income/sources")]);
+  if (!ctx.alive()) return;
+  const people = Object.entries(inc.by_person);
+  ctx.view.innerHTML = monthBar(m) + `<div class="stack">
+    <div class="card row"><div class="grow"><div class="small muted">Received</div><div class="refund" style="font-size:22px;font-weight:600">+${money(inc.received)}</div></div>
+      <div class="grow"><div class="small muted">Still expected</div><div style="font-size:22px">${money(inc.expected)}</div></div></div>
+    ${people.length ? `<div class="card flush list">${people.map(([p, a]) => `<div class="item static"><span class="badge sm" aria-hidden="true">👤</span>
+      <div class="grow">${esc(p)}</div><span class="amt">${money(a)}</span></div>`).join("")}</div>` : ""}
+    ${inc.pay_dates.length ? `<div class="section-label"><span>Pay dates</span></div>
+      <div class="card flush list">${inc.pay_dates.map(p => `<div class="item static">
+        <div class="grow"><div>${esc(p.name)}</div><div class="sub">${esc(fmtShortDay(p.day))}</div></div>
+        <div class="right"><div class="amt">${money(p.amount)}</div>${PAY_STATUS[p.status] ?? ""}</div></div>`).join("")}</div>` : ""}
+    <div class="section-label"><span>Deposits</span></div>
+    ${inc.deposits.length ? `<div class="card flush list">${inc.deposits.map(txRow).join("")}</div>`
+      : `<p class="muted center">No income recorded this month.</p>`}
+    <button class="btn secondary" data-add>Add income by hand</button>
+    <p class="small muted">Pay arrives on its own from bank deposit alerts (Wealthsimple and RBC today) and from screenshots of
+      an account's transactions. Add anything else here.</p>
+    ${regularPayHtml(sources)}
+  </div>`;
+  bindMonthBar(ctx.view, "incomeMonth");
+  $("[data-add]", ctx.view).onclick = () => addIncome(accounts);
+  $("[data-add-source]", ctx.view).onclick = () => sourceSheet(null, accounts);
+  $$("[data-source]", ctx.view).forEach(el => el.onclick = () => sourceSheet(sources.find(s => s.id === el.dataset.source), accounts));
+}
+
+function addIncome(accounts) {
+  const into = accounts.filter(a => a.kind === "chequing" || a.kind === "savings");
+  const sheet = openSheet(`<h2>Add income</h2>
+    <label class="field">Amount<input inputmode="decimal" data-amount placeholder="0.00"></label>
+    <label class="field">From (payer)<input data-payer placeholder="Employer, CRA, …" maxlength="255"></label>
+    <label class="field">Date<input type="date" data-date value="${today()}"></label>
+    <div class="field">Who earned it<div class="chips">${earners().map((p, i) => `<button class="chip ${i ? "" : "on"}" data-earner="${p}">${p}</button>`).join("")}</div></div>
+    <div class="field">Kind<div class="chips">${INCOME_KINDS.map((k, i) => `<button class="chip ${i ? "" : "on"}" data-kind="${k}">${k}</button>`).join("")}</div></div>
+    <label class="field">Into account<select class="input" data-account><option value="">Not sure</option>
+      ${into.map(a => `<option value="${esc(a.id)}">${esc(a.account_name)}</option>`).join("")}</select></label>
+    <p class="err" data-error></p>
+    <div class="stack"><button class="btn" data-save disabled>Add</button><button class="btn text" data-close>Cancel</button></div>`);
+  let earner = earners()[0], kind = INCOME_KINDS[0];
+  const pick = (attr, set) => $$(`[${attr}]`, sheet).forEach(b => b.onclick = () => {
+    $$(`[${attr}]`, sheet).forEach(x => x.classList.toggle("on", x === b)); set(b.getAttribute(attr));
+  });
+  pick("data-earner", v => { earner = v; });
+  pick("data-kind", v => { kind = v; });
+  const amount = $("[data-amount]", sheet), payer = $("[data-payer]", sheet), saveBtn = $("[data-save]", sheet);
+  const check = () => { saveBtn.disabled = !(toCents(amount.value) > 0 && payer.value.trim()); };
+  amount.oninput = check; payer.oninput = check;
+  saveBtn.onclick = async () => {
+    saveBtn.disabled = true;
+    try {
+      await api("/income", { method: "POST", body: {
+        amount: centsText(toCents(amount.value)), payer: payer.value.trim(), received_on: $("[data-date]", sheet).value,
+        earner, category: kind, account_id: $("[data-account]", sheet).value || null } });
+      closeSheet();
+      toast("Income added");
+      route();
+    } catch (e) { $("[data-error]", sheet).textContent = e.message; saveBtn.disabled = false; }
+  };
+}
+
+// ---------- regular pay (income sources) ----------
+const CADENCE_LABELS = { weekly: "Every week", biweekly: "Every two weeks", semimonthly: "Twice a month (15th and last day)",
+                         monthly: "Once a month" };
+
+/** The household's regular paycheques: what tells pay from other deposits, and when it's due. */
+function regularPayHtml(sources) {
+  return `<div class="section-label"><span>Regular pay</span></div>
+    ${sources.length ? `<div class="card flush list">${sources.map(s => `<div class="item" data-source="${esc(s.id)}">
+      <span class="badge sm" aria-hidden="true">💼</span>
+      <div class="grow"><div>${esc(s.name)}${s.active ? "" : ` <span class="muted">(stopped)</span>`}</div>
+        <div class="sub">${esc(s.earner)} · ${money(s.amount)} · ${esc(CADENCE_LABELS[s.cadence] ?? s.cadence)}</div></div>
+      <span class="muted">›</span></div>`).join("")}</div>`
+      : `<p class="small muted">Add each paycheque, so a deposit from that payer counts as pay and the month shows pay still to come.</p>`}
+    <button class="btn secondary" data-add-source>+ Add regular pay</button>`;
+}
+
+function sourceSheet(source, accounts) {
+  const into = accounts.filter(a => a.kind === "chequing" || a.kind === "savings");
+  const s = source ?? { name: "", earner: earners()[0], account_id: null, payer_pattern: "", amount: "", cadence: "biweekly",
+                        anchor_date: today(), active: true };
+  const sheet = openSheet(`<h2>${source ? esc(source.name) : "Regular pay"}</h2><div class="stack">
+    <label class="field">Name<input data-f="name" value="${esc(s.name)}" maxlength="128" placeholder="e.g. Alex's pay"></label>
+    <div class="field">Whose pay<div class="chips">${earners().map(p =>
+      `<button class="chip ${p === s.earner ? "on" : ""}" data-earner="${esc(p)}">${esc(p)}</button>`).join("")}</div></div>
+    <label class="field">Payer, as the deposit names it<input data-f="payer_pattern" value="${esc(s.payer_pattern)}" maxlength="128" placeholder="e.g. ACME PAYROLL"></label>
+    <label class="field">Usual amount<input data-f="amount" inputmode="decimal" value="${s.amount ? esc(centsText(toCents(s.amount))) : ""}" placeholder="0.00"></label>
+    <label class="field">How often<select class="input" data-f="cadence">${Object.entries(CADENCE_LABELS).map(([k, v]) =>
+      `<option value="${k}" ${k === s.cadence ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label>
+    <label class="field">A recent pay day<input type="date" data-f="anchor_date" value="${esc(s.anchor_date)}"></label>
+    <label class="field">Paid into<select class="input" data-f="account_id"><option value="">Any account</option>
+      ${into.map(a => `<option value="${esc(a.id)}" ${a.id === s.account_id ? "selected" : ""}>${esc(a.account_name)}</option>`).join("")}</select></label>
+    ${source ? `<label class="row small"><input type="checkbox" data-active ${s.active ? "checked" : ""}> Still paid</label>` : ""}
+    <p class="err" data-error></p>
+    <button class="btn" data-save>${source ? "Save" : "Add"}</button>
+    ${source ? `<button class="btn danger" data-delete>Remove</button>` : ""}
+    <button class="btn text" data-close>Cancel</button></div>`);
+  let earner = s.earner;
+  $$("[data-earner]", sheet).forEach(b => b.onclick = () => {
+    earner = b.dataset.earner; $$("[data-earner]", sheet).forEach(x => x.classList.toggle("on", x === b));
+  });
+  const field = name => $(`[data-f="${name}"]`, sheet).value.trim();
+  $("[data-save]", sheet).onclick = async () => {
+    const cents = toCents(field("amount"));
+    if (!field("name") || field("payer_pattern").length < 2 || !(cents > 0)) {
+      $("[data-error]", sheet).textContent = "Give it a name, the payer (2+ letters) and the usual amount.";
+      return;
+    }
+    const body = { name: field("name"), earner, payer_pattern: field("payer_pattern"), amount: centsText(cents),
+                   cadence: field("cadence"), anchor_date: field("anchor_date"), account_id: field("account_id") || null };
+    if (source) body.active = $("[data-active]", sheet).checked;
+    try {
+      await api(source ? `/income/sources/${source.id}` : "/income/sources", { method: source ? "PATCH" : "POST", body });
+      closeSheet(); toast(source ? "Saved" : "Regular pay added"); route();
+    } catch (e) { $("[data-error]", sheet).textContent = e.message; }
+  };
+  $("[data-delete]", sheet)?.addEventListener("click", async () => {
+    if (!await confirmSheet(`Remove ${source.name}?`, "Pay already recorded stays; new deposits from this payer won't count as pay automatically.", "Remove")) return;
+    await api(`/income/sources/${source.id}`, { method: "DELETE" });
+    toast("Removed"); route();
+  });
+}
+
+// ---------- savings target and goals ----------
+const GOAL_KINDS = [["savings", "Savings"], ["investment", "Investment"], ["retirement", "Retirement"]];
+const TARGET_STATUS = { met: "✓ Met", on_track: "On track", behind: "Behind" };
+
+async function savingsScreen(ctx) {
+  const [plan, accounts] = await Promise.all([api("/savings"), api("/accounts")]);
+  if (!ctx.alive()) return;
+  const t = plan.target, p = plan.progress;
+  ctx.view.innerHTML = `<div class="stack">
+    <div class="card stack"><h3>Monthly savings target</h3>
+      <div class="small muted">How much the household means to move into savings and investments each month. Money moved
+        between your own accounts counts; pay left sitting in chequing doesn't.</div>
+      ${p ? `<div class="row"><div class="grow"><div class="small muted">${esc(monthTitle(p.month))}</div>
+          <div style="font-size:22px;font-weight:600">${money(p.saved)} <span class="small muted">of ${money(p.target)}</span></div></div>
+          <span class="small">${esc(TARGET_STATUS[p.status] ?? p.status)}</span></div>
+        <div class="progress"><span class="spent" style="width:${Math.min(100, p.percent)}%"></span></div>` : ""}
+      <label class="field">Each month<input data-target inputmode="decimal" value="${t ? esc(centsText(toCents(t.monthly_amount))) : ""}" placeholder="e.g. 1000.00"></label>
+      <label class="field">Remind me if behind on day<input data-alert-day inputmode="numeric" value="${t?.alert_day ?? 25}" maxlength="2"></label>
+      <p class="err" data-target-error></p>
+      <button class="btn" data-save-target>${t ? "Save target" : "Set a target"}</button>
+    </div>
+    <div class="section-label"><span>Goals</span></div>
+    ${plan.goals.length ? plan.goals.map(g => `<div class="card stack" data-goal="${esc(g.id)}" role="button" tabindex="0" style="cursor:pointer">
+      <div class="row"><div class="grow"><div style="font-weight:600">${esc(g.name)}${g.active ? "" : ` <span class="muted">(paused)</span>`}</div>
+        <div class="small muted">${money(g.current)} of ${money(g.target_amount)} by ${esc(fmtDate(`${g.target_date}T12:00:00`))}</div></div>
+        <span class="small">${Math.round(g.percent)}%</span></div>
+      <div class="progress"><span class="spent" style="width:${Math.min(100, g.percent)}%"></span></div>
+      <div class="small muted">${g.required_monthly != null ? `${money(g.required_monthly)} a month would get there` : g.remaining <= 0 ? "Reached 🎉" : "Past its date"}
+        ${g.oldest_balance ? ` · balances as of ${esc(fmtDate(`${g.oldest_balance}T12:00:00`))}` : ""}</div>
+    </div>`).join("") : `<p class="small muted">A goal is an amount by a date, counted from the balances of the accounts you pick
+      (record balances under Balances and net worth).</p>`}
+    <button class="btn secondary" data-add-goal>+ Add a goal</button>
+  </div>`;
+  $("[data-save-target]", ctx.view).onclick = async () => {
+    const cents = toCents($("[data-target]", ctx.view).value), day = +$("[data-alert-day]", ctx.view).value;
+    if (!(cents >= 0) || !(day >= 1 && day <= 28)) {
+      $("[data-target-error]", ctx.view).textContent = "Enter an amount, and a day from 1 to 28.";
+      return;
+    }
+    try {
+      await api("/savings/target", { method: "PUT", body: { monthly_amount: centsText(cents), alert_day: day } });
+      toast("Target saved"); route();
+    } catch (e) { $("[data-target-error]", ctx.view).textContent = e.message; }
+  };
+  $("[data-add-goal]", ctx.view).onclick = () => goalSheet(null, accounts);
+  $$("[data-goal]", ctx.view).forEach(card => card.onclick = () => goalSheet(plan.goals.find(g => g.id === card.dataset.goal), accounts));
+}
+
+function goalSheet(goal, accounts) {
+  const holding = accounts.filter(a => !["credit_card", "loan"].includes(a.kind));
+  const g = goal ?? { name: "", target_amount: "", target_date: `${new Date().getFullYear() + 1}-12-31`, account_kinds: ["savings"],
+                      account_ids: [], active: true };
+  const kinds = new Set(g.account_kinds), ids = new Set(g.account_ids);
+  const sheet = openSheet(`<h2>${goal ? esc(goal.name) : "New goal"}</h2><div class="stack">
+    <label class="field">What for<input data-f="name" value="${esc(g.name)}" maxlength="128" placeholder="e.g. House down payment"></label>
+    <label class="field">Amount<input data-f="amount" inputmode="decimal" value="${g.target_amount ? esc(centsText(toCents(g.target_amount))) : ""}" placeholder="0.00"></label>
+    <label class="field">By<input type="date" data-f="date" value="${esc(g.target_date)}"></label>
+    <div class="field">Counts every account of these kinds<div class="chips">${GOAL_KINDS.map(([k, label]) =>
+      `<button class="chip ${kinds.has(k) ? "on" : ""}" data-kind="${k}">${label}</button>`).join("")}</div></div>
+    <div class="field">…and these accounts<div class="card flush list">${holding.map(a => `<label class="item static">
+      <input type="checkbox" data-account="${esc(a.id)}" ${ids.has(a.id) ? "checked" : ""}>
+      <div class="grow">${esc(a.account_name)}<div class="sub">${esc(a.owner)}</div></div></label>`).join("")}</div></div>
+    ${goal ? `<label class="row small"><input type="checkbox" data-active ${g.active ? "checked" : ""}> Working towards it</label>` : ""}
+    <p class="err" data-error></p>
+    <button class="btn" data-save>${goal ? "Save" : "Add goal"}</button>
+    ${goal ? `<button class="btn danger" data-delete>Remove</button>` : ""}
+    <button class="btn text" data-close>Cancel</button></div>`);
+  $$("[data-kind]", sheet).forEach(b => b.onclick = () => {
+    kinds.has(b.dataset.kind) ? kinds.delete(b.dataset.kind) : kinds.add(b.dataset.kind);
+    b.classList.toggle("on", kinds.has(b.dataset.kind));
+  });
+  $("[data-save]", sheet).onclick = async () => {
+    const name = $('[data-f="name"]', sheet).value.trim(), cents = toCents($('[data-f="amount"]', sheet).value);
+    const chosen = $$("[data-account]", sheet).filter(c => c.checked).map(c => c.dataset.account);
+    if (!name || !(cents > 0)) { $("[data-error]", sheet).textContent = "Give it a name and an amount."; return; }
+    if (!kinds.size && !chosen.length) { $("[data-error]", sheet).textContent = "Pick the accounts it's saved in."; return; }
+    const body = { name, target_amount: centsText(cents), target_date: $('[data-f="date"]', sheet).value,
+                   account_kinds: [...kinds], account_ids: chosen };
+    if (goal) body.active = $("[data-active]", sheet).checked;
+    try {
+      await api(goal ? `/savings/goals/${goal.id}` : "/savings/goals", { method: goal ? "PATCH" : "POST", body });
+      closeSheet(); toast(goal ? "Goal saved" : "Goal added"); route();
+    } catch (e) { $("[data-error]", sheet).textContent = e.message; }
+  };
+  $("[data-delete]", sheet)?.addEventListener("click", async () => {
+    if (!await confirmSheet(`Remove ${goal.name}?`, "Balances and transfers stay; only the goal goes.", "Remove")) return;
+    await api(`/savings/goals/${goal.id}`, { method: "DELETE" });
+    toast("Goal removed"); route();
+  });
+}
+
+// ---------- balances and net worth ----------
+const GROUP_TITLES = { savings: "Savings", investments: "Investments", chequing: "Chequing", credit_cards: "Credit cards (owed)",
+                       loans: "Loans (owed)", other: "Other assets" };
+const signedMoney = n => `${n < 0 ? "−" : "+"}${money(Math.abs(n))}`;
+
+function netWorthCard(worth) {
+  if (!worth) return "";
+  const known = worth.accounts.filter(a => a.balance != null && a.source !== "static").length;
+  const parts = [worth.change != null ? `${signedMoney(worth.change)} vs last month` : "",
+                 worth.contributions || worth.market_return
+                   ? `contributed ${money(worth.contributions)}, market ${signedMoney(worth.market_return)}` : ""].filter(Boolean);
+  return `<a class="card" href="#/balances" data-worth style="display:block;color:inherit">
+    <div class="row"><span class="badge" aria-hidden="true">🏦</span><div class="grow"><div style="font-weight:600">Net worth</div>
+      <div class="small muted">${known ? esc(parts.join(" · ") || `${plural(known, "account")} with a balance`)
+        : "Add balances from a screenshot of your bank apps"}</div></div>
+      <span class="amt">${worth.net_worth < 0 ? "−" : ""}${money(Math.abs(worth.net_worth))}</span></div></a>`;
+}
+
+async function balancesScreen(ctx) {
+  const m = state.balancesMonth;
+  const [worth] = await Promise.all([api(`/balances?month=${m}`), taxonomy()]);
+  if (!ctx.alive()) return;
+  const byGroup = Object.keys(GROUP_TITLES).map(g => [g, worth.accounts.filter(a => a.group === g)]).filter(([, list]) => list.length);
+  const row = a => {
+    const notes = [];
+    if (a.balance == null) notes.push("No balance yet");
+    else if (a.source === "static") notes.push("Fixed amount");
+    else notes.push(`${a.stale ? "Carried from " : "As of "}${fmtDate(a.as_of + "T12:00:00")}`);
+    if (a.contributions != null) notes.push(`contributed ${money(a.contributions)}, ${a.group === "savings" ? "interest" : "market"} ${signedMoney(a.market_return)}`);
+    else if (a.change) notes.push(`${signedMoney(a.change)} since ${fmtDate(a.previous_as_of + "T12:00:00")}`);
+    return `<a class="item" role="button" tabindex="0" data-account="${esc(a.account_id)}">
+      <div class="grow"><div class="ellipsis">${esc(a.account_name)}</div>
+        <div class="sub ${a.stale ? "warn-text" : ""}">${esc(a.owner)} · ${esc(notes.join(" · "))}</div></div>
+      <span class="amt ${a.balance == null ? "muted" : ""}">${a.balance == null ? "—" : money(a.balance)}</span></a>`;
+  };
+  ctx.view.innerHTML = monthBar(m) + `<div class="stack">
+    <div class="card"><div class="small muted">Net worth at the end of ${esc(monthTitle(m))}</div>
+      <div style="font-size:28px;font-weight:700">${worth.net_worth < 0 ? "−" : ""}${money(Math.abs(worth.net_worth))}</div>
+      <div class="stats">
+        <div class="stat"><div class="k">Assets</div><div class="v">${money(worth.assets)}</div></div>
+        <div class="stat"><div class="k">Owed</div><div class="v">${money(worth.liabilities)}</div></div>
+        ${worth.change != null ? `<div class="stat"><div class="k">vs last month</div><div class="v">${signedMoney(worth.change)}</div></div>` : ""}
+      </div>
+      ${worth.contributions || worth.market_return ? `<div class="small muted" style="margin-top:8px">Savings and investments:
+        ${money(worth.contributions)} contributed, <span style="white-space:nowrap">${signedMoney(worth.market_return)}</span> market return and interest.</div>` : ""}
+      ${worth.missing ? `<div class="small muted" style="margin-top:4px">${plural(worth.missing, "account")} without a balance yet (left out).</div>` : ""}
+    </div>
+    <button class="btn" data-shot>Read balances from a screenshot</button>
+    <input type="file" accept="image/*" data-file hidden>
+    ${byGroup.map(([g, list]) => `<div class="section-label"><span>${esc(GROUP_TITLES[g])}</span>
+      <span class="muted">${money(list.reduce((t, a) => t + (a.balance || 0), 0))}</span></div>
+      <div class="card flush list">${list.map(row).join("")}</div>`).join("")}
+    <p class="small muted">Tap an account to type its balance. Balances are what the bank app shows; for cards and loans,
+      what's owed. Facts only, not investment advice.</p>
+  </div>`;
+  bindMonthBar(ctx.view, "balancesMonth");
+  $$("[data-account]", ctx.view).forEach(b => b.onclick = () => editBalance(worth.accounts.find(a => a.account_id === b.dataset.account), m));
+  const file = $("[data-file]", ctx.view);
+  $("[data-shot]", ctx.view).onclick = () => file.click();
+  file.onchange = () => { if (file.files[0]) readBalances(file.files[0], worth.accounts); };
+}
+
+/** The day a balance is for: the last day of a past month, or today in the current one. */
+const balanceDay = m => m === thisMonth() ? today() : localDay(new Date(monthDate(shiftMonth(m, 1)).getTime() - 12 * 3600e3).toISOString());
+
+function editBalance(account, m) {
+  const sheet = openSheet(`<h2>${esc(account.account_name)}</h2>
+    <p class="muted">${account.group === "credit_cards" || account.group === "loans" ? "What's owed, as the bank shows it." : "The balance the bank app shows."}</p>
+    <label class="field">Balance<input inputmode="decimal" data-amount value="${account.balance != null && !account.stale ? Number(account.balance).toFixed(2) : ""}"></label>
+    <label class="field">On<input type="date" data-date value="${balanceDay(m)}" max="${today()}"></label>
+    <p class="err" data-error></p>
+    <div class="stack"><button class="btn" data-save>Save</button><button class="btn text" data-close>Cancel</button></div>`);
+  const amount = $("[data-amount]", sheet), save = $("[data-save]", sheet);
+  amount.oninput = () => { save.disabled = !(toCents(amount.value) >= 0 && amount.value.trim()); };
+  amount.oninput();
+  save.onclick = async () => {
+    save.disabled = true;
+    try {
+      await api(`/balances/${enc(account.account_id)}`, { method: "PUT",
+        body: { as_of: $("[data-date]", sheet).value, balance: centsText(toCents(amount.value)) } });
+      closeSheet();
+      toast("Balance saved");
+      route();
+    } catch (e) { $("[data-error]", sheet).textContent = e.message; save.disabled = false; }
+  };
+}
+
+async function readBalances(file, accounts) {
+  openSheet(`<h2>Reading balances…</h2><div class="row"><div class="spinner" style="margin:12px 0"></div>
+    <p class="muted">Claude is reading the screenshot.</p></div>`, { locked: true });
+  let read;
+  try {
+    const form = new FormData();
+    form.append("file", await compressImage(file), "balances.jpg");
+    if (!state.me) state.me = await api("/me").catch(() => null);
+    if (earners().includes(state.me?.user)) form.append("owner", state.me.user);
+    read = await api("/balances/read", { method: "POST", form });
+  } catch (e) {
+    const sheet = openSheet(`<h2>Couldn't read it</h2><p>${esc(e.message)}</p><button class="btn" data-close>OK</button>`);
+    $("[data-close]", sheet).focus();
+    return;
+  }
+  const options = sel => `<option value="">Skip</option>` + accounts.map(a =>
+    `<option value="${esc(a.account_id)}" ${a.account_id === sel ? "selected" : ""}>${esc(a.account_name)}</option>`).join("");
+  const sheet = openSheet(`<h2>Balances on the screenshot</h2>
+    <p class="muted">Check each one is matched to the right account (or skip it), then save.</p>
+    <label class="field">For the day<input type="date" data-date value="${read.as_of}" max="${today()}"></label>
+    <div class="list">${read.rows.map((r, i) => `<div class="item static" style="display:block">
+      <div class="row"><div class="grow">${esc(r.shown_name)}${r.currency !== "CAD" ? ` <span class="muted">(${esc(r.currency)})</span>` : ""}</div>
+        <span class="amt">${money(r.balance)}${r.owed ? " owed" : ""}</span></div>
+      <select class="input" data-row="${i}">${options(r.account_id)}</select></div>`).join("")}</div>
+    <p class="err" data-error></p>
+    <div class="stack"><button class="btn" data-save>Save balances</button><button class="btn text" data-close>Cancel</button></div>`);
+  $("[data-save]", sheet).onclick = async () => {
+    const rows = read.rows.map((r, i) => ({ account_id: $(`[data-row="${i}"]`, sheet).value, balance: Number(r.balance).toFixed(2) }))
+      .filter(r => r.account_id);
+    const ids = rows.map(r => r.account_id);
+    if (!rows.length) { $("[data-error]", sheet).textContent = "Nothing to save: every row is skipped."; return; }
+    if (new Set(ids).size !== ids.length) { $("[data-error]", sheet).textContent = "Two rows are matched to the same account."; return; }
+    try {
+      await api("/balances/batch", { method: "POST", body: { as_of: $("[data-date]", sheet).value, rows } });
+      closeSheet();
+      toast(`${plural(rows.length, "balance")} saved`);
+      route();
+    } catch (e) { $("[data-error]", sheet).textContent = e.message; }
+  };
+}
+
 async function moreScreen(ctx) {
   if (!state.me) state.me = await api("/me").catch(() => null);
   if (!ctx.alive()) return;
@@ -826,6 +1255,9 @@ async function moreScreen(ctx) {
       ${link("#/budgets", "🎯", "Budgets", "Monthly limits per budget line")}
       ${link("#/alerts", "🔔", "Budget alerts", "Warnings and overages so far")}
       ${link("#/household", "🏠", "Household", "People, cards and accounts")}
+      ${link("#/income", "💰", "Income", "Pay received and expected, by person")}
+      ${link("#/balances", "🏦", "Balances and net worth", "What each account holds, from screenshots")}
+      ${link("#/savings", "🎯", "Savings target and goals", "How much to put away, and what for")}
       ${link("#/categories", "🏷️", "Categories", "Add, rename or merge")}
       ${link("/import", "📄", "Import a statement", "CSV or RBC PDF (easier on a computer)")}
       ${link("#/history", "🗂️", "Import past spending", "From a spreadsheet or another app")}
@@ -953,6 +1385,13 @@ function categoryError(e) {
   return e.message;
 }
 
+// What a category is for, so features follow it through renames (CategoryRow.ROLES on the server).
+const CATEGORY_ROLES = [
+  ["estimated", "Usual monthly spend", "An everyday necessity with no bill (groceries, fuel): its usual amount counts as still to come"],
+  ["subscriptions", "Subscriptions", "A new recurring charge here becomes a bill, with a reminder before it renews"],
+  ["tipped", "Tipped", "A receipt here can match a card charge that includes a tip (restaurants)"],
+];
+
 async function categoriesScreen(ctx) {
   const [cats, tax] = await Promise.all([api("/categories"), taxonomy()]);
   if (!ctx.alive()) return;
@@ -980,6 +1419,9 @@ async function categoriesScreen(ctx) {
     const others = cats.map(x => x.name).filter(n => n !== c.name);
     let mode = "rename";
     const sheet = openSheet(`<h2>${esc(c.name)}</h2><div class="stack">
+      <div class="card flush list">${CATEGORY_ROLES.map(([role, label, hint]) => `<label class="item static">
+        <div class="grow">${label}<div class="sub">${hint}</div></div>
+        <span class="switch"><input type="checkbox" data-role="${role}" ${c[role] ? "checked" : ""}><span></span></span></label>`).join("")}</div>
       <div class="seg"><button class="on" data-mode="rename">Rename</button><button data-mode="merge">Merge into another</button></div>
       <div data-body></div><p class="err" data-error></p>
       <button class="btn" data-go disabled>Rename</button><button class="btn text" data-close>Cancel</button></div>`);
@@ -1001,6 +1443,13 @@ async function categoriesScreen(ctx) {
       }
     };
     $$("[data-mode]", sheet).forEach(b => b.onclick = () => { mode = b.dataset.mode; draw(); });
+    $$("[data-role]", sheet).forEach(input => input.onchange = async () => {
+      try {
+        await api(`/categories/${enc(c.name)}`, { method: "PATCH", body: { [input.dataset.role]: input.checked } });
+        c[input.dataset.role] = input.checked;
+        toast("Saved");
+      } catch (e) { input.checked = !input.checked; toast(e.message); }
+    });
     go.onclick = () => {
       if (mode === "rename") {
         const name = $("[data-rename]", body).value.trim();
@@ -1460,6 +1909,9 @@ const ROUTES = [
   { re: /^\/categories$/, screen: categoriesScreen, title: "Categories", parent: "more" },
   { re: /^\/household$/, screen: householdScreen, title: "Household", parent: "more" },
   { re: /^\/history$/, screen: historyScreen, title: "Import past spending", parent: "more" },
+  { re: /^\/income$/, screen: incomeScreen, title: "Income", parent: "home" },
+  { re: /^\/balances$/, screen: balancesScreen, title: "Balances", parent: "home" },
+  { re: /^\/savings$/, screen: savingsScreen, title: "Savings target and goals", parent: "more" },
 ];
 
 let renderSeq = 0;
@@ -1511,7 +1963,7 @@ async function route() {
   const refresh = $("#refresh");
   refresh.classList.add("spin");
   try {
-    await taxonomy();  // badges for person lines need it
+    await Promise.all([taxonomy(), accounts()]);  // badges for person lines, and account names on transfers
     await r.screen(ctx, ...match.slice(1).map(decodeURIComponent));
     lastRender = Date.now();
   } catch (e) {

@@ -29,6 +29,8 @@ import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Wifi
@@ -69,6 +71,8 @@ fun iconFor(name: String): ImageVector = when (name) {
     "Transfer" -> Icons.Filled.SwapHoriz
     "One-time" -> Icons.Filled.Star
     "Misc" -> Icons.Filled.Category
+    "Salary" -> Icons.Filled.Payments
+    "Other income" -> Icons.Filled.Savings
     else -> when (PersonLines.kinds[name]) {
         "person" -> Icons.Filled.Person
         "abroad" -> Icons.Filled.Public
@@ -78,6 +82,12 @@ fun iconFor(name: String): ImageVector = when (name) {
 }
 
 /** The person and family budget lines (line -> person | abroad | family), as the server's /taxonomy lists them. */
+/** Account id -> name, for showing where a transfer went. Loaded at startup. */
+object AccountNames {
+    var names by mutableStateOf<Map<String, String>>(emptyMap())
+    fun of(id: String?): String? = id?.let { names[it] ?: it }
+}
+
 object PersonLines {
     var kinds by mutableStateOf<Map<String, String>>(emptyMap())
 }

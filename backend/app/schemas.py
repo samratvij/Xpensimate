@@ -5,7 +5,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field, PlainSerializer, computed_field
 
-from app.core.taxonomy import DEFAULT_PURPOSE, budget_line, check_purpose
+from app.core.accounts import ACCOUNT_KINDS
+from app.core.taxonomy import DEFAULT_PURPOSE, budget_line, check_earner, check_purpose
 
 NOTE_MAX = 1000
 
@@ -70,6 +71,8 @@ class TransactionOut(_BudgetLine):
     timestamp: datetime
     amount: Money
     txn_type: str
+    # Transfers: the own account the money went to (account_id is where it came from).
+    counterpart_account_id: str | None = None
     currency: str
     merchant_raw: str
     merchant_normalized: str | None
@@ -144,14 +147,19 @@ class TaxonomyOut(BaseModel):
     person_lines: dict[str, str]
     # ISO 4217 code to show amounts in.
     currency: str
+    # The household's people (who can earn income or own an account), without Shared.
+    people: list[str] = []
 
 
 class CategorySpend(BaseModel):
     # A budget line or a category, depending on the summary's group_by.
     category: str
     spent: Money
-    # Recurring expenses still due this month, and spent + expected.
+    # Still to come this month: recurring bills still due plus the estimate for everyday necessities
+    # (bills_due + estimated), and spent + expected.
     expected: Money
+    bills_due: Money
+    estimated: Money
     projected: Money
     monthly_limit: Money | None
     warning_threshold_percent: Money | None
@@ -161,13 +169,53 @@ class CategorySpend(BaseModel):
     projected_over_limit: bool
 
 
+class IncomeTotals(BaseModel):
+    """Money earned in the month (by who earned it; filtered to one person with the summary's purpose)."""
+
+    received: Money
+    by_person: dict[str, Money]
+    # Paycheques of the household's income sources not seen yet this month (none for a past month).
+    expected: Money
+    expected_by_person: dict[str, Money]
+    # Income received less money spent; projected adds what is still expected on both sides.
+    left_after_spending: Money
+    projected_left: Money
+
+
+class SavingsTotals(BaseModel):
+    """The household's month: what income was left after spending, and what was moved into savings and
+    investment accounts (transfers between own accounts; market returns are never counted)."""
+
+    # Income less spending, and that as a share of income (None without income).
+    kept: Money
+    rate: float | None
+    to_savings: Money
+    from_savings: Money
+    to_investments: Money
+    from_investments: Money
+    net_to_savings: Money
+    net_to_investments: Money
+    # net_to_savings + net_to_investments
+    moved: Money
+    # The household's monthly savings target and how far "moved" is towards it (None without a target).
+    target: Money | None = None
+    target_percent: float | None = None
+    # met | on_track | behind
+    target_status: str | None = None
+
+
 class SummaryOut(BaseModel):
     month: str
     group_by: str
     purpose: str | None
     total_spent: Money
     total_expected: Money
+    total_bills_due: Money
+    total_estimated: Money
     categories: list[CategorySpend]
+    income: IncomeTotals
+    # Household only: None when the summary is for one person.
+    savings: SavingsTotals | None = None
 
 
 class RecategorizeOut(BaseModel):
@@ -361,7 +409,8 @@ class StatementPreviewOut(StatementImportOut):
 
 
 class StatementCommitIn(BaseModel):
-    # Row index -> "add" | "skip" | "match:<transaction id>", for unclear rows or to override a plan.
+    # Row index -> "add" | "skip" | "transfer" | "income" (deposits only) | "match:<transaction id>", for unclear
+    # rows and deposits, or to override a plan.
     decisions: dict[str, str] = {}
     # Ids of missing transactions with "replaced_by" that are real after all: left as they are.
     keep: list[str] = []
@@ -384,8 +433,10 @@ class PhoneNotificationOut(BaseModel):
 class MonthTotal(BaseModel):
     month: str
     spent: Money
-    # Recurring amounts still due (only the current month has any).
+    # Still to come (only the current month has any): bills still due plus estimated necessities.
     expected: Money
+    bills_due: Money
+    estimated: Money
     by_line: dict[str, Money]
 
 
@@ -458,6 +509,18 @@ class CategoryOut(BaseModel):
     name: str
     transactions: int
     monthly_limit: Money | None
+    # Everyday necessity: its usual monthly amount counts as still to come.
+    estimated: bool = False
+    # New recurring charges here become bills with renewal reminders.
+    subscriptions: bool = False
+    # Receipts may be matched to a charge that includes a tip.
+    tipped: bool = False
+
+
+class CategoryRoles(BaseModel):
+    estimated: bool | None = None
+    subscriptions: bool | None = None
+    tipped: bool | None = None
 
 
 class CategoryName(BaseModel):
@@ -483,3 +546,244 @@ class HealthCheck(BaseModel):
 class HealthOut(BaseModel):
     checked_at: datetime
     checks: list[HealthCheck]
+
+
+Earner = Annotated[str, AfterValidator(check_earner)]
+
+
+class IncomeIn(BaseModel):
+    """Income entered by hand (a deposit no alert or screenshot reported)."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    amount: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+    received_on: date
+    earner: Earner
+    payer: str = Field(min_length=1, max_length=255)
+    account_id: str | None = None
+    category: Literal["Salary", "Other income"] = "Salary"
+    note: str | None = Field(None, max_length=NOTE_MAX)
+
+
+IncomeCadence = Literal["weekly", "biweekly", "semimonthly", "monthly"]
+
+
+class IncomeSourceIn(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    earner: Earner
+    account_id: str | None = None
+    payer_pattern: str = Field(min_length=2, max_length=128)
+    amount: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+    amount_tolerance: Decimal = Field(Decimal("0.25"), ge=0, le=1, decimal_places=2)
+    cadence: IncomeCadence
+    anchor_date: date
+    active: bool = True
+
+
+class IncomeSourcePatch(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=128)
+    earner: Earner | None = None
+    account_id: str | None = None
+    payer_pattern: str | None = Field(None, min_length=2, max_length=128)
+    amount: Decimal | None = Field(None, gt=0, max_digits=10, decimal_places=2)
+    amount_tolerance: Decimal | None = Field(None, ge=0, le=1, decimal_places=2)
+    cadence: IncomeCadence | None = None
+    anchor_date: date | None = None
+    active: bool | None = None
+
+
+class IncomeSourceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    earner: str
+    account_id: str | None
+    payer_pattern: str
+    amount: Money
+    amount_tolerance: Money
+    cadence: str
+    anchor_date: date
+    active: bool
+
+
+class PayDateOut(BaseModel):
+    source_id: uuid.UUID
+    name: str
+    earner: str
+    day: date
+    amount: Money
+    status: str  # received | upcoming | late
+
+
+class IncomeMonthOut(IncomeTotals):
+    month: str
+    earner: str | None
+    deposits: list[TransactionOut]
+    pay_dates: list[PayDateOut]
+
+
+class AccountBalanceOut(BaseModel):
+    account_id: str
+    account_name: str
+    institution: str
+    kind: str
+    owner: str
+    # savings | investments | chequing | credit_cards | loans | other
+    group: str
+    # Credit cards and loans: what is owed. None: no balance recorded yet.
+    balance: Money | None
+    as_of: date | None
+    # The balance is from an earlier month, carried forward.
+    stale: bool
+    source: str | None
+    previous_balance: Money | None = None
+    previous_as_of: date | None = None
+    change: Money | None = None
+    # Savings and investments: money moved in from the household's accounts (net) between the two balances, and
+    # the rest of the change (market return, or interest).
+    contributions: Money | None = None
+    market_return: Money | None = None
+
+
+class BalancesOut(BaseModel):
+    month: str
+    as_of: date
+    assets: Money
+    liabilities: Money
+    net_worth: Money
+    previous_net_worth: Money | None
+    change: Money | None
+    groups: dict[str, Money]
+    contributions: Money
+    market_return: Money
+    # Accounts with no balance recorded at all (left out of net worth).
+    missing: int
+    accounts: list[AccountBalanceOut]
+
+
+class BalanceIn(BaseModel):
+    as_of: date
+    # What the bank shows; for a credit card or loan, the amount owed.
+    balance: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+    note: str | None = Field(None, max_length=NOTE_MAX)
+
+
+class BalanceSnapshotOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    account_id: str
+    as_of: date
+    balance: Money
+    source: str
+    note: str | None
+    created_by: str | None
+
+
+class BalanceReadRow(BaseModel):
+    shown_name: str
+    balance: Money
+    owed: bool
+    currency: str
+    # The household's account it was matched to; None when it couldn't tell (the person picks one).
+    account_id: str | None
+    account_name: str | None
+
+
+class BalanceReadOut(BaseModel):
+    """What a screenshot showed; nothing is saved until POST /balances/batch."""
+
+    as_of: date
+    rows: list[BalanceReadRow]
+
+
+class BalanceBatchRow(BaseModel):
+    account_id: str
+    balance: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+
+
+class BalanceBatchIn(BaseModel):
+    as_of: date
+    rows: list[BalanceBatchRow] = Field(min_length=1, max_length=60)
+    source: Literal["screenshot", "manual"] = "screenshot"
+
+
+class SavingsTargetIn(BaseModel):
+    monthly_amount: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
+    alert_day: int = Field(25, ge=1, le=28)
+    warning_percent: Decimal = Field(Decimal("80.00"), gt=0, le=100)
+
+
+class SavingsTargetOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    monthly_amount: Money
+    alert_day: int
+    warning_percent: Money
+
+
+class TargetProgressOut(BaseModel):
+    month: str
+    target: Money
+    saved: Money
+    kept: Money
+    percent: float
+    remaining: Money
+    status: str
+
+
+# Account kinds a goal can draw on (app/core/accounts.py).
+GoalKind = Literal[ACCOUNT_KINDS]
+
+
+class GoalIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=128)
+    target_amount: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+    target_date: date
+    account_kinds: list[GoalKind] = []
+    account_ids: list[str] = []
+
+
+class GoalPatch(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=128)
+    target_amount: Decimal | None = Field(None, gt=0, max_digits=12, decimal_places=2)
+    target_date: date | None = None
+    account_kinds: list[GoalKind] | None = None
+    account_ids: list[str] | None = None
+    active: bool | None = None
+
+
+class GoalAccountOut(BaseModel):
+    account_id: str
+    account_name: str
+    owner: str
+    balance: Money | None
+    as_of: date | None
+
+
+class GoalOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    target_amount: Money
+    target_date: date
+    account_kinds: list[str]
+    account_ids: list[str]
+    active: bool
+    current: Money
+    remaining: Money
+    percent: float
+    months_left: int
+    # What would reach the goal in the months left; None once reached or past the date.
+    required_monthly: Money | None
+    moved_this_month: Money
+    oldest_balance: date | None
+    accounts: list[GoalAccountOut]
+
+
+class SavingsPlanOut(BaseModel):
+    target: SavingsTargetOut | None
+    progress: TargetProgressOut | None
+    goals: list[GoalOut]

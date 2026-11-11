@@ -6,6 +6,17 @@ plan() compares each statement row with what the app already has for that accoun
   payment     a card payment: recorded as "not an expense", and the bank-side alert that paid it
               (e.g. a PC Money "purchase" with no merchant) is excluded too
   unclear     several app transactions fit equally well: the user picks one, adds it, or skips
+  income      a deposit that is pay (payroll words, or one of the household's income sources): added as income
+  deposit     other money in (an e-transfer received, a transfer from another account): the user says what it
+              is: "income", "add" (money back, counted against spending), "move:<account>" (from another of the
+              household's accounts), "transfer" (own money, other side unknown) or "skip"
+  transfer    money sent out of a bank account (an e-transfer, a move to savings): "move:<account>" (to another
+              of the household's accounts: saving or investing when that account is one), "transfer" (own
+              money, other side unknown, e.g. to Alex or Sam), "add" (spending: someone was paid for
+              something) or "skip"
+Deposits and transfers carry "suggested" when the app can tell (app/services/savings.py); it is what happens
+unless the user picks otherwise. A move the app already has (seen from the other account, or a Wealthsimple
+email) is a match.
   imported    already added by an earlier import of the same statement
   outside     not in the month being imported
 It also lists app transactions for the account in that period that are not on the statement. One with a
@@ -26,11 +37,12 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.daemons.parsers.common import UNKNOWN_MERCHANT
 from app.db.base import SessionLocal
-from app.db.models import StatementImport, Transaction
+from app.db.models import Account, StatementImport, Transaction
+from app.services import income, savings
 from app.services.adjustments import CENT, STATEMENT_MERCHANT_SCORE, STATEMENT_WINDOW_DAYS, same_merchant
 from app.services.ingest import NewTransaction, find_by_source_ref, ingest_transaction
 from app.services.reconciler import merchant_score
-from app.statements.parsers import PAYMENT, ParsedStatement, StatementRow, source_refs
+from app.statements.parsers import DEPOSIT, PAYMENT, PURCHASE, TRANSFER_OUT, ParsedStatement, StatementRow, source_refs
 
 log = logging.getLogger(__name__)
 
@@ -111,6 +123,18 @@ def _payment_pair(db: Session, account_id: str, row: StatementRow, claimed: set)
     return None
 
 
+def _income_twin(db: Session, account_id: str, row: StatementRow, claimed: set) -> Transaction | None:
+    """Pay the app already has (from an email or the phone) for this deposit: same account and amount, close in date."""
+    start, end = _window(row.spent_on)
+    return db.scalar(select(Transaction).where(
+        Transaction.account_id == account_id,
+        Transaction.txn_type == income.INCOME,
+        Transaction.amount == -row.amount,
+        Transaction.timestamp >= start, Transaction.timestamp < end,
+        Transaction.id.not_in(claimed) if claimed else true(),
+    ).order_by(Transaction.timestamp))
+
+
 def _replacements(missing: list[Transaction], planned: list[dict]) -> dict:
     """Missing transaction id -> the statement row that replaced it: same merchant, a different amount, dated
     up to a week later (the closest one). Each row replaces at most one charge."""
@@ -146,6 +170,8 @@ def plan(db: Session, parsed: ParsedStatement, account_id: str, month: str | Non
 
     claimed: set = set()
     planned = []
+    account = db.get(Account, account_id)
+    bank_account = account is not None and account.kind != "credit_card"
     for row, ref in zip(parsed.rows, refs):
         entry = {
             "index": row.index, "date": row.spent_on.isoformat(), "time": row.at.strftime("%H:%M") if row.at else None,
@@ -158,6 +184,21 @@ def plan(db: Session, parsed: ParsedStatement, account_id: str, month: str | Non
         if existing := find_by_source_ref(db, source, ref):
             claimed.add(existing.id)
             planned.append({**entry, "action": "imported", "transaction": _brief(existing)})
+            continue
+        moves_money = row.kind == TRANSFER_OUT or (
+            bank_account and row.kind == PURCHASE and savings.TRANSFER_WORDS.search(row.merchant))
+        if row.kind == DEPOSIT or moves_money:
+            when = datetime.combine(row.spent_on, DEFAULT_TIME, tzinfo=_tz())
+            known = (_income_twin(db, account_id, row, claimed) if row.kind == DEPOSIT else None) or \
+                savings.find_twin(db, account_id, row.amount, when, claimed)
+            if known:
+                claimed.add(known.id)
+                planned.append({**entry, "action": "match", "transaction": _brief(known)})
+            elif row.kind == DEPOSIT and income.is_pay(db, account_id, row.merchant, -row.amount):
+                planned.append({**entry, "action": "income"})
+            else:
+                planned.append({**entry, "action": "deposit" if row.kind == DEPOSIT else "transfer",
+                                "suggested": savings.suggest(db, account_id, row.merchant)})
             continue
         if row.kind == PAYMENT:
             pair = _payment_pair(db, account_id, row, claimed)
@@ -208,19 +249,24 @@ def _timestamp(row: dict) -> datetime:
     return datetime.combine(date.fromisoformat(row["date"]), at, tzinfo=_tz())
 
 
-def _add(db: Session, imp: StatementImport, row: dict, *, excluded: bool = False) -> Transaction:
+def _add(db: Session, imp: StatementImport, row: dict, *, excluded: bool = False, is_income: bool = False,
+         move: tuple[str | None, str | None] | None = None) -> Transaction:
+    """Create a statement row's transaction; `move` = (from, to) records it as a transfer between own accounts."""
     txn, _ = ingest_transaction(
         db,
         NewTransaction(
             source=source_for(imp.bank_format),
             source_ref=row["source_ref"],
-            account_id=imp.account_id,
+            account_id=move[0] if move else imp.account_id,
             timestamp=_timestamp(row),
             amount=Decimal(row["amount"]),
             merchant=row["merchant"],
             reconciliation_status="PENDING_MATCH" if not excluded else "SETTLED",
             bank_category=row.get("bank_category"),
             excluded=excluded,
+            income=is_income,
+            transfer=move is not None,
+            transfer_to=move[1] if move else None,
         ),
         raw_payload={"statement_import_id": str(imp.id), **row},
     )
@@ -230,7 +276,7 @@ def _add(db: Session, imp: StatementImport, row: dict, *, excluded: bool = False
 
 def apply_row(db: Session, imp: StatementImport, row: dict, decision: str | None) -> str:
     """Carry out one row's action (or the user's decision for it). Returns what was done."""
-    action = decision or row["action"]
+    action = decision or row.get("suggested") or row["action"]
     if action.startswith("match:") or action == "match":
         txn_id = action.split(":", 1)[1] if ":" in action else row["transaction"]["id"]
         allowed = {c["id"] for c in row.get("candidates", [])} | ({row["transaction"]["id"]} if row.get("transaction") else set())
@@ -242,6 +288,14 @@ def apply_row(db: Session, imp: StatementImport, row: dict, decision: str | None
     if action == "add":
         _add(db, imp, row)
         return "added"
+    if action == "income":
+        _add(db, imp, row, is_income=True)
+        return "income"
+    if action == "transfer" or action.startswith("move:"):
+        other = action.split(":", 1)[1] if ":" in action else None
+        out = Decimal(row["amount"]) > 0  # money leaving this account
+        _add(db, imp, row, move=(imp.account_id, other) if out else (other, imp.account_id))
+        return "transfer"
     if action == "payment":
         _add(db, imp, row, excluded=True)
         if row.get("pays") and (paid := db.get(Transaction, row["pays"]["id"])):

@@ -139,7 +139,7 @@ fun MonthlyBars(months: List<MonthTotal>, selected: YearMonth, onSelect: (YearMo
                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 LegendSwatch(solid, striped = false); Text("Spent", style = MaterialTheme.typography.labelSmall)
                 Spacer(Modifier.width(8.dp))
-                LegendSwatch(solid, striped = true); Text("Bills still due", style = MaterialTheme.typography.labelSmall)
+                LegendSwatch(solid, striped = true); Text("Still expected", style = MaterialTheme.typography.labelSmall)
             }
         }
     }

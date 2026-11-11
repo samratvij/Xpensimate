@@ -36,6 +36,9 @@ DefaultCategory = Literal[
 ]
 
 DEFAULT_CATEGORIES: tuple[str, ...] = get_args(DefaultCategory)
+# What some starter categories are for (CategoryRow.ROLES); follows the category through renames.
+STARTER_ROLES = {"Grocery": ("estimated",), "Gas & Parking": ("estimated",), "Subscriptions": ("subscriptions",),
+                 "Eating Out": ("tipped",)}
 UNCATEGORIZED = "Uncategorized"
 # The shared purpose: always first, budgeted by category, and the default for anything not yet sorted.
 DEFAULT_PURPOSE = SHARED
@@ -63,6 +66,22 @@ def personal_purposes() -> tuple[str, ...]:
 def person_lines() -> dict[str, str]:
     """Budget line -> icon kind, for the lines that belong to a person or family rather than a category."""
     return {line: p.icon for p in purpose_defs() for line in (p.transfer_line, p.line) if line}
+
+
+def people() -> tuple[str, ...]:
+    """The household's people: purposes with their own budget line drawn as a person (not abroad or family)."""
+    return tuple(p.name for p in purpose_defs() if p.line and p.icon == "person")
+
+
+def earners() -> tuple[str, ...]:
+    """Who income can belong to: each person, or Shared (e.g. interest on a joint account)."""
+    return (*people(), DEFAULT_PURPOSE)
+
+
+def check_earner(value: str) -> str:
+    if value not in earners():
+        raise ValueError(f"Income is earned by one of {', '.join(earners())}")
+    return value
 
 
 def reserved_names() -> set[str]:

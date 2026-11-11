@@ -9,7 +9,9 @@ Real samples seen so far:
   the title)
 
 Health-insurance claim payouts deposited into the Cash account count as a refund (negative amount) under the
-insurer's name, so a full-price therapy charge minus the claim nets to what was really paid.
+insurer's name, so a full-price therapy charge minus the claim nets to what was really paid. Other deposits from
+a named payer ("A direct deposit of $3,250.40 from NORTHWIND has arrived") come back as income (income=True); whether
+it is really pay is decided on ingest (app/services/income.py). E-transfers received are not.
 """
 import re
 from decimal import Decimal
@@ -56,6 +58,24 @@ INSURERS = {
 }
 INSURER = re.compile("|".join(f"(?P<i{n}>{pat})" for n, pat in enumerate(INSURERS.values())), re.IGNORECASE)
 FAILED = re.compile(r"\b(declined|failed|rejected)\b", re.IGNORECASE)
+# "A direct deposit of $3,250.40 from NORTHWIND has arrived" / "You received $3,250.40 from NORTHWIND in your Cash account" /
+# "Your payroll deposit of $3,250.40 from NORTHWIND is here".
+DEPOSIT = re.compile(
+    r"\b(?:direct deposit|payroll|deposit(?:ed)?|received)\b.*?(?P<amount>\$\s?[\d,]+\.\d{2})\s+from\s+"
+    r"(?P<payer>.+?)(?=\s+(?:has|is|was|in|into|to)\b|[.!]?\s*$)",
+    re.IGNORECASE,
+)
+E_TRANSFER = re.compile(r"\be-?transfer\b", re.IGNORECASE)
+
+
+def deposit(body: str) -> ParsedAlert | None:
+    """Money arriving in the Cash account from a named payer (pay, most likely)."""
+    if FAILED.search(body) or E_TRANSFER.search(body) or not (match := DEPOSIT.search(body)):
+        return None
+    amount, payer = parse_amount(match["amount"]), clean_merchant(match["payer"])
+    if amount is None or amount <= 0 or not payer:
+        return None
+    return ParsedAlert(amount=amount, merchant=payer, account_id="ws_cash", income=True)
 
 
 def insurer_in(text: str) -> str | None:
@@ -77,6 +97,8 @@ def parse(title: str, text: str) -> ParsedAlert | None:
     if insurer and amount is not None and not FAILED.search(body):
         # An insurance claim paid out: money back against the original full-price charge.
         return ParsedAlert(amount=-abs(amount), merchant=insurer, account_id="ws_cash")
+    if income := deposit(body):
+        return income
     if NOT_SPENDING.search(body) and not REFUND.search(body):
         return None
     if match := SPEND.search(text) or SPEND.search(body):

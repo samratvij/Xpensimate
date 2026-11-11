@@ -6,6 +6,7 @@ amount is within tolerance is linked to it as a payment. Each payment pays the u
 it, even across a month edge (rent paid on Oct 30 pays Nov 1); unpaid due dates are "expected".
 """
 import calendar
+import re
 import statistics
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -16,9 +17,11 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.money import money
 from app.core.config import get_settings
 from app.core.taxonomy import budget_line
 from app.db.models import CategorizationExample, RecurringExpense, Transaction
+from app.services.categories import categories_with
 from app.services.merchant import matches_pattern, merchant_key
 
 # Typical gap between charges and the range a single gap may fall in.
@@ -70,12 +73,20 @@ def due_dates(item: RecurringExpense, start: date, end: date) -> list[date]:
     return dates
 
 
+def _merchant_matches(pattern: str, merchant_raw: str) -> bool:
+    # "*" and runs of spaces separate words too: "GOOGLE *GOOGLE*ONE 01M" is a "Google One" charge.
+    loose = re.sub(r"\s+", " ", merchant_raw.replace("*", " ")).strip()
+    return matches_pattern(pattern, merchant_key(merchant_raw), merchant_raw, loose)
+
+
+def _amount_matches(item: RecurringExpense, amount: Decimal) -> bool:
+    return abs(amount - item.amount) <= item.amount * item.amount_tolerance
+
+
 def matches(item: RecurringExpense, merchant_raw: str, amount: Decimal) -> bool:
     if not item.active or not item.merchant_pattern or amount <= 0:
         return False
-    if not matches_pattern(item.merchant_pattern, merchant_key(merchant_raw), merchant_raw):
-        return False
-    return abs(amount - item.amount) <= item.amount * item.amount_tolerance
+    return _merchant_matches(item.merchant_pattern, merchant_raw) and _amount_matches(item, amount)
 
 
 def link_transaction(db: Session, txn: Transaction) -> RecurringExpense | None:
@@ -126,6 +137,79 @@ def link_existing(db: Session, item: RecurringExpense) -> int:
             txn.categorized_by = "recurring"
             linked += 1
     return linked
+
+
+# --- new subscriptions ---------------------------------------------------------------------------
+
+SUBSCRIPTION_TOLERANCE = Decimal("0.10")
+# Earlier charges this recent decide whether a merchant is a subscription; older ones mean it lapsed and restarted.
+SUBSCRIPTION_LOOKBACK_DAYS = 75
+# App stores and processors that bill on a service's behalf: "GOOGLE *GOOGLE*ONE 01M" is Google One.
+_BILLER_PREFIX = re.compile(r"^(GOOGLE|APPLE\.COM/BILL|PAYPAL|PP|SQ|SP)\s*\*\s*", re.IGNORECASE)
+
+
+# A company suffix ends the name: "GITHUB  INC. SAN FRANCISCO CA US" is GitHub.
+_COMPANY_SUFFIX = re.compile(r"\s+(INC|LLC|LTD|CORP|GMBH)\b.*$", re.IGNORECASE)
+
+
+def subscription_name(merchant_raw: str) -> str:
+    name = _BILLER_PREFIX.sub("", merchant_raw.strip()).replace("*", " ")
+    return merchant_key(_COMPANY_SUFFIX.sub("", name))
+
+
+def track_new_subscription(db: Session, txn: Transaction) -> RecurringExpense | None:
+    """Start a monthly bill for a subscription charge (a category switched to "subscriptions") nothing tracks yet, so its renewal shows in Bills.
+
+    It's a subscription if the merchant hasn't charged lately, or charged about the same a month earlier (one
+    that was never tracked); other recent repeats are irregular purchases. Anything the user stopped stays
+    stopped. For a charge no recurring expense claimed; links it to the new one.
+    """
+    if (txn.recurring_id is not None or txn.excluded or txn.amount <= 0
+            or txn.category not in categories_with(db, "subscriptions")):
+        return None
+    name = subscription_name(txn.merchant_raw)
+    if not name:
+        return None
+    known = list(db.scalars(select(RecurringExpense)))
+    if any(
+        r.merchant_pattern and _merchant_matches(r.merchant_pattern, txn.merchant_raw) and _amount_matches(r, txn.amount)
+        for r in known
+    ):
+        return None  # tracked (or stopped on purpose)
+    tz = ZoneInfo(get_settings().timezone)
+    day = txn.timestamp.astimezone(tz).date()
+    earlier = [
+        (t.timestamp.astimezone(tz).date(), t.amount)
+        for t in db.scalars(select(Transaction).where(
+            Transaction.excluded.is_(False), Transaction.amount > 0,
+            Transaction.timestamp < txn.timestamp,
+            Transaction.timestamp >= txn.timestamp - timedelta(days=SUBSCRIPTION_LOOKBACK_DAYS),
+        ))
+        if t.id != txn.id and _merchant_matches(name, t.merchant_raw)
+    ]
+    lo, hi = CADENCES["monthly"][1]
+    if earlier and not any(
+        lo <= (day - d).days <= hi and abs(a - txn.amount) <= txn.amount * SUBSCRIPTION_TOLERANCE for d, a in earlier
+    ):
+        return None
+    names = {r.name.lower() for r in known}
+    if name.lower() in names:  # another plan from the same service
+        name = f"{name} {money(txn.amount)}"
+        if name.lower() in names:
+            return None
+    item = RecurringExpense(
+        name=name, merchant_pattern=subscription_name(txn.merchant_raw), category=txn.category, purpose=txn.purpose,
+        amount=txn.amount, amount_tolerance=SUBSCRIPTION_TOLERANCE, cadence="monthly", anchor_date=day,
+        origin="detected",
+    )
+    db.add(item)
+    db.flush()
+    txn.recurring_id = item.id
+    return item
+
+
+def next_due(item: RecurringExpense, after: date) -> date:
+    return due_dates(item, after + timedelta(days=1), after + timedelta(days=CADENCES[item.cadence][0] * 2))[0]
 
 
 @dataclass

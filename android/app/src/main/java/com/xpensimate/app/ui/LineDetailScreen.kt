@@ -132,7 +132,7 @@ private fun LineHeader(line: String, month: YearMonth, spend: LineSpend?, count:
                     warn = spend.overWarning || spend.projectedOverLimit)
             }
             if ((spend?.expected ?: 0.0) > 0) {
-                Text("+${spend!!.expected.money()} in bills still due · ${spend.projected.money()} projected",
+                Text((spend!!.stillToCome() + "${spend.projected.money()} projected").joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }

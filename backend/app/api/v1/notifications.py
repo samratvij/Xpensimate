@@ -7,6 +7,7 @@ from app.daemons.parsers import google_wallet, wealthsimple
 from app.db.base import get_db
 from app.db.models import RawIngestLog
 from app.schemas import PhoneNotificationIn, PhoneNotificationOut
+from app.services import income
 from app.services.accounts import account_for_alert
 from app.services.ingest import NewTransaction, ingest_transaction
 
@@ -36,7 +37,9 @@ def receive_notification(body: PhoneNotificationIn, db: Session = Depends(get_db
         return PhoneNotificationOut(status="ignored")
 
     account_id = account_for_alert(db, parsed.card_suffix, parsed.account_id, parsed.card_name)
-    ref = hashlib.sha1(f"{body.key}|{body.posted_at.isoformat()}".encode()).hexdigest()[:24]
+    if parsed.income and not income.is_pay(db, account_id, parsed.merchant, parsed.amount):
+        return PhoneNotificationOut(status="ignored")  # money in that isn't pay (a transfer, a gift)
+    ref =hashlib.sha1(f"{body.key}|{body.posted_at.isoformat()}".encode()).hexdigest()[:24]
     txn, created = ingest_transaction(
         db,
         NewTransaction(
@@ -47,6 +50,7 @@ def receive_notification(body: PhoneNotificationIn, db: Session = Depends(get_db
             amount=parsed.amount,
             merchant=parsed.merchant,
             reconciliation_status="PENDING_MATCH",
+            income=parsed.income,
         ),
         raw_payload={**body.model_dump(mode="json"), "parsed": {"amount": str(parsed.amount), "merchant": parsed.merchant}},
     )

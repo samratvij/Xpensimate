@@ -49,7 +49,9 @@ def test_rename_moves_everything(client, db):
     client.post("/api/v1/recurring", json={"name": "DashPass", "category": "Eating Out", "amount": "11.29",
                                            "cadence": "monthly", "anchor_date": "2026-11-01"})
     body = client.post("/api/v1/categories/Eating Out/rename", json={"name": "Restaurants"}).json()
-    assert body == {"name": "Restaurants", "transactions": 1, "monthly_limit": 500.0}
+    # The rename keeps what the category is for: Eating Out is tipped.
+    assert body == {"name": "Restaurants", "transactions": 1, "monthly_limit": 500.0, "estimated": False,
+                    "subscriptions": False, "tipped": True}
     db.expire_all()
     assert db.get(Transaction, txn.id).category == "Restaurants"
     assert db.get(BudgetEnvelope, "Restaurants") is not None and db.get(BudgetEnvelope, "Eating Out") is None

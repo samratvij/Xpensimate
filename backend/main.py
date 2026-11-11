@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, FastAPI, Request
@@ -6,12 +7,15 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.v1 import (
     alerts,
+    balances,
     budgets,
     categories,
     devices,
+    goals as goals_api,
     health,
     history,
     household,
+    income,
     insights,
     meta,
     notifications,
@@ -23,13 +27,26 @@ from app.api.v1 import (
     transactions,
 )
 from app.core.security import require_token
+from app.services import goals, renewals
 
-app = FastAPI(title="Xpensimate", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    stops = [
+        renewals.start(),  # a week's notice before each subscription renews
+        goals.start(),  # behind on the monthly savings target
+    ]
+    yield
+    for stop in stops:
+        stop.set()
+
+
+app = FastAPI(title="Xpensimate", version="0.1.0", lifespan=lifespan)
 
 api_v1 = APIRouter(prefix="/api/v1", dependencies=[Depends(require_token)])
 for module in (
     transactions, notifications, receipts, recurring, statements, budgets, categories, summary, insights, alerts, devices,
-    rules, meta, health, household, history
+    rules, meta, health, household, history, income, balances, goals_api
 ):
     api_v1.include_router(module.router)
 app.include_router(api_v1)
