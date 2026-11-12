@@ -31,13 +31,18 @@ and *who* it was for. Budgets, bills and alerts flow out. Your money data never 
 
 <div align="center">
 
-| Budget at a glance | Month-end review | Every charge, sorted |
+| Budget at a glance | Ask about your money | Every charge, sorted |
 |:---:|:---:|:---:|
-| <img src="docs/screenshots/budget.png" alt="Budget screen: October spending against budget, a six-month trend and per-line budgets" width="240" /> | <img src="docs/screenshots/month-review.png" alt="Month review: each budget line against its budget and the usual month" width="240" /> | <img src="docs/screenshots/activity.png" alt="Activity: charges by day with category, and uncategorized ones to check" width="240" /> |
-| **One receipt, many budgets** | **Bills you can see coming** | **Web app for iPhone and laptops** |
-| <img src="docs/screenshots/receipt.png" alt="A Costco receipt read line by line, each line with its own category and person" width="240" /> | <img src="docs/screenshots/bills.png" alt="Bills: paid and upcoming bills for the month" width="240" /> | <img src="docs/screenshots/web-app.png" alt="The web app's home screen" width="240" /> |
+| <img src="docs/screenshots/budget.png" alt="Budget tab: spent against the month's budget, insight cards, income, saved and net worth, and each budget line" width="240" /> | <img src="docs/screenshots/ask.png" alt="Ask: the assistant answers whether a $3,000 trip in March is affordable, from the household's spending, income and savings" width="240" /> | <img src="docs/screenshots/activity.png" alt="Activity: charges by day with their category, filters, and uncategorized ones to check" width="240" /> |
+| **Savings target and goals** | **Balances and net worth** | **Month-end review** |
+| <img src="docs/screenshots/savings.png" alt="Savings: this month's savings against the target, and an emergency fund goal with the monthly amount that reaches it" width="240" /> | <img src="docs/screenshots/balances.png" alt="Balances: net worth, contributions and market return, and each account's balance by kind" width="240" /> | <img src="docs/screenshots/month-review.png" alt="Month review: each budget line against its budget and the usual month" width="240" /> |
+| **One receipt, many budgets** | **Bills you can see coming** | **Set up in the browser** |
+| <img src="docs/screenshots/receipt.png" alt="A Costco receipt read line by line, each line with its own category and person" width="240" /> | <img src="docs/screenshots/bills.png" alt="Bills: paid and upcoming bills for the month" width="240" /> | <img src="docs/screenshots/web-setup.png" alt="The web app's setup wizard: accounts with their type, owner and card digits" width="240" /> |
 
-<sub>Demo data for a fictional household: try it yourself with <code>python -m app.scripts.seed_demo</code>.</sub>
+<img src="docs/screenshots/web-app.png" alt="The web app on a laptop: insight cards, the month's spending, income and savings" width="720" />
+
+<sub>The Android app (light) and the web app (dark), showing the demo data for a fictional household. See
+<a href="#-quick-start">Quick start</a> to try it yourself.</sub>
 
 </div>
 
@@ -226,7 +231,8 @@ More → Household.
 - **iPhone:** add the web app to your home screen (Share → Add to Home Screen).
 
 **Just want to look around?** Skip the wizard: use the example household, then fill it with six months of
-made-up spending (it refuses to run once you have real transactions):
+made-up spending, pay, savings, balances and a savings goal, the data in the screenshots above (it refuses to
+run once you have real transactions):
 
 ```bash
 cp household.example.toml household.toml && docker compose restart api
@@ -272,7 +278,8 @@ cd android && ./gradlew assembleDebug
 # app/build/outputs/apk/debug/app-debug.apk
 ```
 
-On first launch, enter your server address and your API token.
+On first launch, enter your server address and your API token. The bar has four tabs: **Budget**,
+**Activity**, **Ask** and **More** (Receipts, Bills and Settings).
 
 - **Purchase capture** needs "notification access" for Xpensimate (Settings in the app links to it).
   Purchases seen while the server is unreachable are queued and sent later.

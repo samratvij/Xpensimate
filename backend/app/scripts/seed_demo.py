@@ -101,12 +101,14 @@ BUDGETS = {
 PERSON_BUDGET = "300"
 FAMILY_BUDGETS = {"transfer": "400", "line": "150"}
 
-# Each person's pay: who ("person:0"...), payer as the deposit names it, net amount, cadence.
+# Each person's pay: who ("person:0"...), payer as the deposit names it, net amount, cadence, and the first pay
+# day (days after the start; a monthly pay keeps that day of the month).
 PAY = (
-    ("person:0", "HARBORLINE CO PAYROLL", "2840.15", "semimonthly"),
-    ("person:1", "MAPLEWORKS INC PAY", "2315.60", "biweekly"),
+    ("person:0", "HARBORLINE CO PAYROLL", "5680.30", "monthly", 0),
+    ("person:1", "MAPLEWORKS INC PAY", "2315.60", "biweekly", 13),
 )
-# Moved from chequing every month, a few days after pay, by kind of account.
+# Moved from chequing every month, a few days after the first pay of the month, by kind of account.
+SAVING_DAY = 3
 MONTHLY_SAVING = {"savings": "600", "investment": "500", "retirement": "300"}
 # Balances six months back, by kind; credit cards owe what their statement says, so they're drawn per month.
 OPENING_BALANCE = {"chequing": "3200", "savings": "8400", "investment": "21500", "retirement": "34000",
@@ -282,13 +284,13 @@ class Seeder:
     def income(self) -> None:
         """Each person's regular pay, and every paycheque since the start."""
         seen = set()
-        for who, payer, amount, cadence in PAY:
+        for who, payer, amount, cadence, first in PAY:
             earner = self.who[who]
             if earner in seen or earner == DEFAULT_PURPOSE:
                 continue
             seen.add(earner)
             source = IncomeSource(name=f"{earner}'s pay", earner=earner, account_id=self.chequing, payer_pattern=payer.split()[0],
-                                  amount=Decimal(amount), cadence=cadence, anchor_date=self.start + timedelta(days=13))
+                                  amount=Decimal(amount), cadence=cadence, anchor_date=self.start + timedelta(days=first))
             self.db.add(source)
             self.db.flush()
             for day in pay_dates(source, self.start, self.today + timedelta(days=1)):
@@ -312,7 +314,7 @@ class Seeder:
             month_end = (month + timedelta(days=32)).replace(day=1) - timedelta(days=1)
             for account in self.household_accounts:
                 moved = MONTHLY_SAVING.get(account.kind)
-                day = month.replace(day=18)
+                day = month.replace(day=SAVING_DAY)
                 if moved and day <= self.today:
                     amount = Decimal(moved)
                     self.count += 1
@@ -334,12 +336,17 @@ class Seeder:
                 elif account.kind == "chequing":
                     balances[account.id] += _money(self.rng, -250, 300)
                 if month_end > last_month_end:
-                    continue  # the month isn't over: its balance comes from the bank app at month-end
+                    # The month isn't over: a balance from the bank app a few days ago, so net worth has moved.
+                    as_of = self.today - timedelta(days=2)
+                    if as_of < month:
+                        continue
+                else:
+                    as_of = month_end
                 balance = (_money(self.rng, 400, 1900) if account.kind == "credit_card"
                            else balances[account.id].quantize(Decimal("0.01")))
                 if account.kind == "asset" and not balance:
                     continue
-                self.db.add(BalanceSnapshot(account_id=account.id, as_of=month_end, balance=balance, source="manual"))
+                self.db.add(BalanceSnapshot(account_id=account.id, as_of=as_of, balance=balance, source="manual"))
 
     def plan(self) -> None:
         """A monthly savings target, and a goal counted from the savings accounts."""
