@@ -272,7 +272,7 @@ private fun ReviewReadingDialog(
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(10.dp)) {
                             Row {
-                                Text(row.shownName + if (row.currency != "CAD") " (${row.currency})" else "", Modifier.weight(1f))
+                                Text(row.shownName + if (row.currency != AppCurrency.code) " (${row.currency})" else "", Modifier.weight(1f))
                                 Text(row.balance.money() + if (row.owed) " owed" else "", fontWeight = FontWeight.SemiBold)
                             }
                             AccountPicker(chosen[i], accounts) { chosen[i] = it }
@@ -311,30 +311,6 @@ private fun AccountPicker(selected: String?, accounts: List<AccountBalance>, onP
             accounts.forEach { a ->
                 DropdownMenuItem(text = { Text(a.accountName) }, onClick = { onPick(a.accountId); open = false })
             }
-        }
-    }
-}
-
-/** The dashboard's net worth card. */
-@Composable
-fun NetWorthCard(worth: Balances, onClick: () -> Unit) {
-    val known = worth.accounts.count { it.balance != null && it.source != "static" }
-    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Net worth", style = MaterialTheme.typography.titleSmall)
-                Text(
-                    if (known == 0) "Add balances from a screenshot of your bank apps"
-                    else listOfNotNull(
-                        worth.change?.let { "${it.signedMoney()} vs last month" },
-                        if (worth.contributions != 0.0 || worth.marketReturn != 0.0)
-                            "contributed ${worth.contributions.money()}, market ${worth.marketReturn.signedMoney()}" else null,
-                    ).joinToString(" · ").ifEmpty { "$known accounts with a balance" },
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Text((if (worth.netWorth < 0) "−" else "") + abs(worth.netWorth).money(),
-                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         }
     }
 }

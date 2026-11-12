@@ -1,10 +1,16 @@
 package com.xpensimate.app.ui
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,13 +18,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.TrendingDown
-import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
@@ -180,16 +182,15 @@ private fun DashboardContent(
     onOpenSavings: () -> Unit,
 ) {
     // Budgeted lines first (closest to their limit on top), then everything else by size.
-    val lines = summary.categories.sortedWith(
-        compareByDescending<LineSpend> { it.monthlyLimit != null }
-            .thenByDescending { line -> line.monthlyLimit?.let { line.projected / it } ?: 0.0 }
-            .thenByDescending { it.projected }
-    )
+    val (budgeted, other) = summary.categories.partition { it.monthlyLimit != null }
+    val budgetedSorted = budgeted.sortedByDescending { it.projected / it.monthlyLimit!! }
+    val otherSorted = other.filter { it.spent > 0 || it.expected > 0 }.sortedByDescending { it.projected }
     val previous = vm.trend.firstOrNull { YearMonth.parse(it.month) == vm.month.minusMonths(1) }?.spent
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         vm.message?.let { text ->
             item { Text(text, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 4.dp)) }
         }
+        item(key = "hero") { HeroCard(summary, vm.month, previous) }
         if (vm.insights.isNotEmpty()) item(key = "insights") {
             InsightsSection(
                 vm.insights,
@@ -205,33 +206,15 @@ private fun DashboardContent(
                 onDismiss = vm::dismiss,
             )
         }
-        item { HeroCard(summary, vm.month, previous) }
-        if (vm.purpose == null || vm.purpose in EARNERS) item(key = "income") {
-            IncomeCard(summary.income, summary.savings, current = vm.month == YearMonth.now(), onClick = onOpenIncome)
+        item(key = "money") {
+            MoneyStrip(
+                summary, vm.balances,
+                showIncome = vm.purpose == null || vm.purpose in EARNERS,
+                current = vm.month == YearMonth.now(),
+                onOpenIncome = onOpenIncome, onOpenSavings = onOpenSavings, onOpenBalances = onOpenBalances,
+            )
         }
-        summary.savings?.takeIf { it.target != null }?.let { sav ->
-            item(key = "savings") { SavingsCard(sav, vm.plan?.goals.orEmpty().filter { it.active }, onOpenSavings) }
-        }
-        vm.balances?.let { worth -> item(key = "worth") { NetWorthCard(worth, onOpenBalances) } }
-        if (vm.trend.isNotEmpty()) item {
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Last $TREND_MONTHS months", style = MaterialTheme.typography.titleSmall)
-                    val shown = vm.trend.firstOrNull { YearMonth.parse(it.month) == vm.month }
-                    Text(
-                        shown?.let { m ->
-                            "${vm.month.title()}: ${m.spent.money()} spent" +
-                                if (m.expected > 0) " + ${m.expected.money()} still expected" else ""
-                        } ?: "Tap a month to open it",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.size(12.dp))
-                    MonthlyBars(vm.trend, vm.month, vm::selectMonth)
-                }
-            }
-        }
-        item {
+        item(key = "who") {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = vm.purpose == null, onClick = { vm.selectPurpose(null) }, label = { Text("Everyone") })
                 vm.purposes.forEach { who ->
@@ -239,50 +222,109 @@ private fun DashboardContent(
                 }
             }
         }
-        if (lines.isEmpty()) item { Text("No spending this month yet.", Modifier.padding(8.dp)) }
-        items(lines, key = { it.category }) { LineCard(it) { onOpenLine(it.category) } }
+        if (budgetedSorted.isEmpty() && otherSorted.isEmpty()) item { Text("No spending this month yet.", Modifier.padding(8.dp)) }
+        if (budgetedSorted.isNotEmpty()) item(key = "budgeted") { LineGroup(null, budgetedSorted, onOpenLine) }
+        if (otherSorted.isNotEmpty()) item(key = "other") { LineGroup("Not budgeted", otherSorted, onOpenLine) }
+        if (vm.trend.isNotEmpty()) item(key = "trend") {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Last $TREND_MONTHS months", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.size(12.dp))
+                    MonthlyBars(vm.trend, vm.month, vm::selectMonth)
+                }
+            }
+        }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+/** The month in one glance: spent against the total budget, and one line on where it's heading. */
 @Composable
 private fun HeroCard(summary: Summary, month: YearMonth, previous: Double?) {
     val projected = summary.totalSpent + summary.totalExpected
     val budget = summary.categories.sumOf { it.monthlyLimit ?: 0.0 }
+    val current = month == YearMonth.now()
+    val onColor = MaterialTheme.colorScheme.onPrimaryContainer
     Card(
         Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
     ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(if (month == YearMonth.now()) "Spent so far this month" else "Spent in ${month.title()}",
-                style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
             Row(verticalAlignment = Alignment.Bottom) {
-                Text(summary.totalSpent.money(), style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer)
-                if (budget > 0) Text("  of ${budget.money()}", style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.padding(bottom = 6.dp))
+                Text(summary.totalSpent.wholeMoney(), style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.SemiBold, color = onColor)
+                Text(if (budget > 0) "  of ${budget.wholeMoney()}" else "  spent", style = MaterialTheme.typography.titleMedium,
+                    color = onColor.copy(alpha = 0.75f), modifier = Modifier.padding(bottom = 6.dp))
             }
             if (budget > 0) BudgetProgress(summary.totalSpent, projected, budget, over = summary.totalSpent > budget,
                 warn = projected > budget)
-            // Up to four stats: they wrap to a second line rather than squeeze the last one.
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (summary.totalBillsDue > 0) HeroStat("Bills still due", summary.totalBillsDue.money())
-                if (summary.totalEstimated > 0) HeroStat("Usual spend to come", summary.totalEstimated.money())
-                if (summary.totalExpected > 0) HeroStat("Projected", projected.money())
+            // Mid-month, compare where the month is heading, not a few days against a whole month.
+            val compared = if (current) projected else summary.totalSpent
+            val parts = listOfNotNull(
+                if (current && summary.totalExpected > 0) "Heading for ${projected.wholeMoney()}" else null,
                 previous?.takeIf { it > 0 }?.let { prev ->
-                    // Mid-month, compare where the month is heading, not a few days against a whole month.
-                    val current = month == YearMonth.now()
-                    val change = ((if (current) projected else summary.totalSpent) - prev) / prev * 100
-                    Column {
-                        Text(if (current) "Projected vs last month" else "vs last month", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(if (change >= 0) Icons.AutoMirrored.Filled.TrendingUp else Icons.AutoMirrored.Filled.TrendingDown,
-                                contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
-                            Spacer(Modifier.width(4.dp))
-                            Text("${if (change >= 0) "+" else "−"}${abs(change).roundToInt()}%", style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        }
+                    val change = ((compared - prev) / prev * 100).roundToInt()
+                    when {
+                        change == 0 -> "same as last month"
+                        change > 0 -> "$change% more than last month"
+                        else -> "${-change}% less than last month"
                     }
+                },
+            )
+            if (parts.isNotEmpty()) Text(parts.joinToString(" · "), style = MaterialTheme.typography.bodyMedium, color = onColor)
+        }
+    }
+}
+
+/** Income, savings and net worth as three small figures; each opens its own screen for the detail. */
+@Composable
+private fun MoneyStrip(
+    summary: Summary, balances: Balances?, showIncome: Boolean, current: Boolean,
+    onOpenIncome: () -> Unit, onOpenSavings: () -> Unit, onOpenBalances: () -> Unit,
+) {
+    val savings = summary.savings?.takeIf { it.target != null }
+    if (!showIncome && savings == null && balances == null) return
+    Card(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            if (showIncome) {
+                val income = summary.income
+                MiniStat("Income", income.received.wholeMoney(),
+                    if (current && income.expected > 0) "+${income.expected.wholeMoney()} due" else null, onOpenIncome)
+            }
+            savings?.let { sav ->
+                MiniStat("Saved", sav.moved.wholeMoney(), "of ${sav.target!!.wholeMoney()}", onOpenSavings,
+                    subColor = if (sav.targetStatus == "behind") ChartColors.warning else null)
+            }
+            balances?.let { worth ->
+                MiniStat("Net worth", (if (worth.netWorth < 0) "−" else "") + abs(worth.netWorth).wholeMoney(),
+                    worth.change?.let { (if (it < 0) "−" else "+") + abs(it).wholeMoney() }, onOpenBalances)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RowScope.MiniStat(label: String, value: String, sub: String?, onClick: () -> Unit, subColor: Color? = null) {
+    Column(Modifier.weight(1f).clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp)) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Text(sub ?: " ", style = MaterialTheme.typography.labelSmall, maxLines = 1,
+            color = subColor ?: MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** Budget lines as a tight list in one card; the line screen holds the detail. */
+@Composable
+private fun LineGroup(title: String?, lines: List<LineSpend>, onOpenLine: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        title?.let {
+            Text(it, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 4.dp, top = 4.dp))
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(vertical = 4.dp)) {
+                lines.forEachIndexed { i, line ->
+                    if (i > 0) HorizontalDivider(Modifier.padding(start = 60.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    LineRow(line) { onOpenLine(line.category) }
                 }
             }
         }
@@ -290,49 +332,36 @@ private fun HeroCard(summary: Summary, month: YearMonth, previous: Double?) {
 }
 
 @Composable
-private fun HeroStat(label: String, value: String) {
-    Column {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-        Text(value, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-    }
-}
-
-@Composable
-private fun LineCard(line: LineSpend, onClick: () -> Unit) {
+private fun LineRow(line: LineSpend, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                CategoryBadge(line.category)
-                Column(Modifier.weight(1f)) {
-                    Text(line.category, style = MaterialTheme.typography.titleSmall)
-                    val notes = buildList {
-                        addAll(line.stillToCome())
-                        line.monthlyLimit?.let { add("${(line.spent / it * 100).roundToInt()}% of ${it.money()}") }
-                    }
-                    if (notes.isNotEmpty()) Text(notes.joinToString(" · "), style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant)
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        CategoryBadge(line.category, size = 32.dp)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(line.category, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f))
+                when {
+                    line.overLimit -> Icon(Icons.Filled.Error, "Over budget", tint = ChartColors.critical, modifier = Modifier.size(16.dp))
+                    line.projectedOverLimit -> Icon(Icons.Filled.Warning, "On track to go over", tint = ChartColors.warning,
+                        modifier = Modifier.size(16.dp))
+                    line.overWarning -> Icon(Icons.Filled.Warning, "Nearing the budget", tint = ChartColors.warning,
+                        modifier = Modifier.size(16.dp))
                 }
-                Text(line.spent.money(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(line.spent.wholeMoney()) }
+                        line.monthlyLimit?.let { withStyle(SpanStyle(color = colors.onSurfaceVariant)) { append(" / ${it.wholeMoney()}") } }
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
             }
             line.monthlyLimit?.let { limit ->
                 BudgetProgress(line.spent, line.projected, limit, over = line.overLimit, warn = line.overWarning || line.projectedOverLimit)
-                when {
-                    line.overLimit -> StatusNote(Icons.Filled.Error, ChartColors.critical, "Over budget by ${(line.spent - limit).money()}")
-                    line.projectedOverLimit -> StatusNote(Icons.Filled.Warning, ChartColors.warning,
-                        "On track to go over with what's still to come")
-                    line.overWarning -> StatusNote(Icons.Filled.Warning, ChartColors.warning, "Nearing the budget")
-                }
             }
         }
-    }
-}
-
-@Composable
-private fun StatusNote(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: androidx.compose.ui.graphics.Color, text: String) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
-        Text(text, style = MaterialTheme.typography.bodySmall)
     }
 }
 

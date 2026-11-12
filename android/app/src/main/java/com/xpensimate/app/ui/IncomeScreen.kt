@@ -113,6 +113,15 @@ fun IncomeScreen(vm: IncomeViewModel, onOpenTransaction: (String) -> Unit) {
                                     Text(amount.money(), fontWeight = FontWeight.SemiBold)
                                 }
                             }
+                            if (inc.received > 0) {
+                                HorizontalDivider()
+                                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+                                    Text("Left after spending", Modifier.weight(1f))
+                                    val left = inc.leftAfterSpending
+                                    Text((if (left < 0) "−" else "") + abs(left).money(), fontWeight = FontWeight.SemiBold,
+                                        color = if (left < 0) ChartColors.critical else MaterialTheme.colorScheme.onSurface)
+                                }
+                            }
                         }
                     }
                     if (inc.payDates.isNotEmpty()) {
@@ -203,54 +212,3 @@ private fun AddIncomeDialog(saving: Boolean, error: String?, onDismiss: () -> Un
 }
 
 /** The dashboard's income card: pay received (by person), still expected, and what's left after spending. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun IncomeCard(income: IncomeTotals, savings: SavingsTotals?, current: Boolean, onClick: () -> Unit) {
-    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                CategoryBadge("Salary")
-                Column(Modifier.weight(1f)) {
-                    Text("Income", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        income.byPerson.entries.joinToString(" · ") { (who, amount) -> "$who ${amount.money()}" }
-                            .ifEmpty { if (income.expected > 0) "No pay received yet" else "No income recorded yet" },
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Text(
-                    if (income.received > 0) "+${income.received.money()}" else 0.0.money(),
-                    style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
-                    color = if (income.received > 0) ChartColors.good else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            if (income.received > 0 || income.expected > 0) {
-                val projected = current && income.expected > 0
-                val left = if (projected) income.projectedLeft else income.leftAfterSpending
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (income.expected > 0) Stat("Pay still expected", income.expected.money())
-                    Stat(if (projected) "Left after spending (projected)" else "Left after spending",
-                        (if (left < 0) "−" else "") + abs(left).money(), negative = left < 0)
-                    savings?.rate?.let { Stat("Savings rate", "${it}%", negative = it < 0) }
-                }
-            }
-            if (savings != null && listOf(savings.toSavings, savings.fromSavings, savings.toInvestments, savings.fromInvestments).any { it != 0.0 }) {
-                val parts = listOfNotNull(
-                    savings.netToSavings.takeIf { it != 0.0 }?.let { "${if (it < 0) "−" else ""}${abs(it).money()} to savings" },
-                    savings.netToInvestments.takeIf { it != 0.0 }?.let { "${if (it < 0) "−" else ""}${abs(it).money()} to investments" },
-                )
-                Text("Moved: " + parts.joinToString(" · ").ifEmpty { "in and out evenly" },
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-    }
-}
-
-@Composable
-private fun Stat(label: String, value: String, negative: Boolean = false) {
-    Column {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.titleMedium,
-            color = if (negative) ChartColors.critical else MaterialTheme.colorScheme.onSurface)
-    }
-}

@@ -112,30 +112,6 @@ private fun GoalProgress(goal: Goal, named: Boolean = true) {
 
 /** The dashboard's savings card: this month's target progress and each goal. */
 @Composable
-fun SavingsCard(savings: SavingsTotals, goals: List<Goal>, onClick: () -> Unit) {
-    val target = savings.target ?: return
-    val behind = savings.targetStatus == "behind"
-    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Savings this month", style = MaterialTheme.typography.titleSmall)
-                    Text("${STATUS[savings.targetStatus] ?: ""} · income less spending ${savings.kept.money()}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (behind) ChartColors.warning else MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Text("${savings.moved.money()} / ${target.money()}", fontWeight = FontWeight.SemiBold)
-            }
-            LinearProgressIndicator(
-                progress = { (savings.moved / target).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth(),
-                color = if (behind) ChartColors.warning else MaterialTheme.colorScheme.primary,
-            )
-            goals.forEach { GoalProgress(it) }
-        }
-    }
-}
-
-@Composable
 fun SavingsScreen(vm: SavingsViewModel) {
     LaunchedEffect(Unit) { vm.load() }
     var editingTarget by remember { mutableStateOf(false) }
