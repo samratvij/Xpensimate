@@ -37,6 +37,20 @@ answer is constrained by a JSON schema built per request from the live categorie
 validated; a failure leaves the charge uncategorized rather than blocking ingestion. See
 [local-models.md](local-models.md).
 
+## Chat assistant
+- **Tools, not a data dump**: the model asks for what each question needs (summaries, searches, bills) instead
+  of getting a snapshot of everything in the prompt. Totals come from SQL, so it never adds up numbers itself.
+  Write tools call the API's own endpoint functions, so a chat edit is validated and budget-checked like an app
+  edit. It may change data only when asked clearly; when a request is ambiguous it asks instead.
+- **Append-only threads**, stored in Claude's message format exactly as sent or received (tool calls together
+  with their results), so replaying a conversation is always valid and its prefix stays cached. With
+  `LLM_PROVIDER=openai` the same thread is translated to chat completion messages each turn, so a conversation
+  can continue after switching providers. Threads stop at 40 questions; the apps start a new one.
+- **A fallback model** (Claude Haiku by default) takes over the rest of an answer when the first is overloaded
+  or unreachable. Web search is Claude's server tool, so local models answer without it and say so.
+- **Private per person** (by API token), with a monthly question limit per person (`CHAT_MONTHLY_LIMIT`).
+- Android gets answers whole (Retrofit); the web app streams them.
+
 ## Accounts and card digits
 Accounts are listed in `household.toml`, each with a kind (chequing, credit card, savings, investment,
 retirement, loan or other asset; regional names like TFSA, 401(k) or ISA map onto these) and an owner (a

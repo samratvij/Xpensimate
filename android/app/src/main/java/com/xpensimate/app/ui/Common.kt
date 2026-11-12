@@ -82,6 +82,10 @@ private fun moneyFormat(code: String): NumberFormat = moneyFormats.getOrPut(code
 
 fun Double.money(): String = moneyFormat(AppCurrency.code).format(this)
 
+/** Without cents, for round example amounts ("$3,000"). */
+fun Double.wholeMoney(): String =
+    (moneyFormat(AppCurrency.code).clone() as NumberFormat).apply { maximumFractionDigits = 0 }.format(this)
+
 val zone: ZoneId = ZoneId.systemDefault()
 private val monthTitle = DateTimeFormatter.ofPattern("MMMM yyyy")
 fun YearMonth.title(): String = format(monthTitle)

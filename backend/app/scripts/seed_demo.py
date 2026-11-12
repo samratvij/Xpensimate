@@ -1,4 +1,5 @@
-"""Fill an empty Xpensimate with six months of made-up spending, to try the apps or take screenshots.
+"""Fill an empty Xpensimate with six months of made-up spending, pay, savings and balances, to try the apps
+or take screenshots.
 
     docker compose exec api python -m app.scripts.seed_demo
 
@@ -20,7 +21,19 @@ from app.core.config import get_settings
 from app.core.household import load_household
 from app.core.taxonomy import DEFAULT_PURPOSE, UNCATEGORIZED, person_lines, purpose_defs
 from app.db.base import SessionLocal
-from app.db.models import BudgetEnvelope, Receipt, ReceiptItem, RecurringExpense, Transaction
+from app.db.models import (
+    BalanceSnapshot,
+    BudgetEnvelope,
+    IncomeSource,
+    Receipt,
+    ReceiptItem,
+    RecurringExpense,
+    SavingsGoal,
+    SavingsTarget,
+    Transaction,
+)
+from app.services.income import INCOME, SALARY, pay_dates
+from app.services.savings import TRANSFER, TRANSFER_CATEGORY
 from app.services.merchant import normalize_merchant
 from app.services.reconciler import apply_match
 from app.services.recurring import due_dates
@@ -88,6 +101,18 @@ BUDGETS = {
 PERSON_BUDGET = "300"
 FAMILY_BUDGETS = {"transfer": "400", "line": "150"}
 
+# Each person's pay: who ("person:0"...), payer as the deposit names it, net amount, cadence.
+PAY = (
+    ("person:0", "HARBORLINE CO PAYROLL", "2840.15", "semimonthly"),
+    ("person:1", "MAPLEWORKS INC PAY", "2315.60", "biweekly"),
+)
+# Moved from chequing every month, a few days after pay, by kind of account.
+MONTHLY_SAVING = {"savings": "600", "investment": "500", "retirement": "300"}
+# Balances six months back, by kind; credit cards owe what their statement says, so they're drawn per month.
+OPENING_BALANCE = {"chequing": "3200", "savings": "8400", "investment": "21500", "retirement": "34000",
+                   "loan": "15000", "asset": "0"}
+SAVINGS_TARGET = "1500"
+
 NOTES = {
     "PAI NORTHERN THAI": "Anniversary dinner",
     "IKEA ETOBICOKE": "Bookshelf for the office",
@@ -116,10 +141,14 @@ class Seeder:
         self.rng = random.Random(seed)
         self.tz = ZoneInfo(get_settings().timezone)
         self.who = _purposes()
-        accounts = [a.id for a in load_household().accounts]
+        accounts = load_household().accounts
         if not accounts:
             raise DemoRefused("household.toml has no accounts; add at least one")
-        self.accounts = accounts
+        self.household_accounts = accounts
+        # Purchases go on cards and chequing accounts, never on savings or investments.
+        spending = [a.id for a in accounts if a.kind in ("credit_card", "chequing")]
+        self.accounts = spending or [a.id for a in accounts]
+        self.chequing = next((a.id for a in accounts if a.kind == "chequing"), None)
         self.count = 0
         first = (today.replace(day=1) - timedelta(days=1)).replace(day=1)
         for _ in range(MONTHS - 2):
@@ -246,6 +275,80 @@ class Seeder:
         for line, limit in limits.items():
             self.db.add(BudgetEnvelope(category=line, monthly_limit=Decimal(limit)))
 
+    def months(self) -> list[date]:
+        """The first day of each month shown, oldest first."""
+        return sorted({d.replace(day=1) for d in self.days()})
+
+    def income(self) -> None:
+        """Each person's regular pay, and every paycheque since the start."""
+        seen = set()
+        for who, payer, amount, cadence in PAY:
+            earner = self.who[who]
+            if earner in seen or earner == DEFAULT_PURPOSE:
+                continue
+            seen.add(earner)
+            source = IncomeSource(name=f"{earner}'s pay", earner=earner, account_id=self.chequing, payer_pattern=payer.split()[0],
+                                  amount=Decimal(amount), cadence=cadence, anchor_date=self.start + timedelta(days=13))
+            self.db.add(source)
+            self.db.flush()
+            for day in pay_dates(source, self.start, self.today + timedelta(days=1)):
+                if day > self.today:
+                    continue
+                self.count += 1
+                self.db.add(Transaction(
+                    source=SOURCE, source_ref=f"demo:{self.count}", account_id=self.chequing, timestamp=self.at(day),
+                    amount=source.amount, txn_type=INCOME, excluded=True, merchant_raw=payer,
+                    merchant_normalized=normalize_merchant(payer), category=SALARY, purpose=earner,
+                    income_source_id=source.id, categorized_by="income", inference_confidence=Decimal("1.00"),
+                ))
+
+    def savings(self) -> None:
+        """A monthly move from chequing into each savings and investment account, and month-end balances."""
+        if self.chequing is None:
+            return
+        last_month_end = self.today.replace(day=1) - timedelta(days=1)
+        balances = {a.id: Decimal(OPENING_BALANCE.get(a.kind, "0")) for a in self.household_accounts}
+        for month in self.months():
+            month_end = (month + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+            for account in self.household_accounts:
+                moved = MONTHLY_SAVING.get(account.kind)
+                day = month.replace(day=18)
+                if moved and day <= self.today:
+                    amount = Decimal(moved)
+                    self.count += 1
+                    self.db.add(Transaction(
+                        source=SOURCE, source_ref=f"demo:{self.count}", account_id=self.chequing,
+                        counterpart_account_id=account.id, timestamp=self.at(day), amount=amount, txn_type=TRANSFER,
+                        excluded=True, merchant_raw=f"Transfer to {account.name}", merchant_normalized=f"Transfer to {account.name}",
+                        category=TRANSFER_CATEGORY, purpose=account.owner, categorized_by="transfer",
+                        inference_confidence=Decimal("1.00"),
+                    ))
+                    balances[account.id] += amount
+                # What the money did on its own: interest on savings, the market on investments.
+                if account.kind == "savings":
+                    balances[account.id] *= Decimal("1.0025")
+                elif account.kind in ("investment", "retirement"):
+                    balances[account.id] *= Decimal(str(round(1 + self.rng.uniform(-0.025, 0.035), 4)))
+                elif account.kind == "loan":
+                    balances[account.id] -= Decimal("350")
+                elif account.kind == "chequing":
+                    balances[account.id] += _money(self.rng, -250, 300)
+                if month_end > last_month_end:
+                    continue  # the month isn't over: its balance comes from the bank app at month-end
+                balance = (_money(self.rng, 400, 1900) if account.kind == "credit_card"
+                           else balances[account.id].quantize(Decimal("0.01")))
+                if account.kind == "asset" and not balance:
+                    continue
+                self.db.add(BalanceSnapshot(account_id=account.id, as_of=month_end, balance=balance, source="manual"))
+
+    def plan(self) -> None:
+        """A monthly savings target, and a goal counted from the savings accounts."""
+        if self.db.get(SavingsTarget, "household") is None:
+            self.db.add(SavingsTarget(scope="household", monthly_amount=Decimal(SAVINGS_TARGET)))
+        if any(a.kind == "savings" for a in self.household_accounts):
+            self.db.add(SavingsGoal(name="Emergency fund", target_amount=Decimal("20000"),
+                                    target_date=date(self.today.year + 1, 6, 30), account_kinds=["savings"]))
+
     def run(self) -> int:
         self.bills()
         self.spending()
@@ -253,6 +356,9 @@ class Seeder:
         self.receipts()
         self.to_review()
         self.budgets()
+        self.income()
+        self.savings()
+        self.plan()
         self.db.commit()
         # This month's budget alerts, as if the charges had arrived live.
         evaluate(self.db, set(BUDGETS) | set(person_lines()))
@@ -272,4 +378,4 @@ if __name__ == "__main__":
             n = seed_demo(session)
         except DemoRefused as e:
             sys.exit(f"Not seeding: {e}")
-    print(f"Added {n} demo transactions, bills, budgets and receipts.")
+    print(f"Added {n} demo transactions, with bills, budgets, receipts, pay, balances and a savings goal.")

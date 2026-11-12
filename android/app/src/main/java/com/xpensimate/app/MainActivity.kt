@@ -11,6 +11,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -21,8 +23,12 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Insights
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -66,6 +72,10 @@ import com.xpensimate.app.ui.BudgetsScreen
 import com.xpensimate.app.ui.BudgetsViewModel
 import com.xpensimate.app.ui.CategoriesScreen
 import com.xpensimate.app.ui.CategoriesViewModel
+import com.xpensimate.app.ui.ChatMemoryScreen
+import com.xpensimate.app.ui.ChatMemoryViewModel
+import com.xpensimate.app.ui.ChatScreen
+import com.xpensimate.app.ui.ChatViewModel
 import com.xpensimate.app.ui.DashboardScreen
 import com.xpensimate.app.ui.DashboardViewModel
 import com.xpensimate.app.ui.XpensimateTheme
@@ -133,12 +143,14 @@ private fun AppRoot(app: XpensimateApp, openAlerts: MutableState<Boolean>) {
     }
 }
 
-private enum class Tab(val route: String, val label: String, val icon: ImageVector) {
+/** Top-level screens. Those with inBar = false are reached from the bar's More menu. */
+private enum class Tab(val route: String, val label: String, val icon: ImageVector, val inBar: Boolean = true) {
     Dashboard("dashboard", "Budget", Icons.Filled.Dashboard),
     Transactions("transactions", "Activity", Icons.AutoMirrored.Filled.ReceiptLong),
-    Receipts("receipts", "Receipts", Icons.Filled.DocumentScanner),
-    Bills("bills", "Bills", Icons.Filled.CalendarMonth),
-    Settings("settings", "Settings", Icons.Filled.Settings),
+    Chat("chat", "Ask", Icons.Filled.QuestionAnswer),
+    Receipts("receipts", "Receipts", Icons.Filled.DocumentScanner, inBar = false),
+    Bills("bills", "Bills", Icons.Filled.CalendarMonth, inBar = false),
+    Settings("settings", "Settings", Icons.Filled.Settings, inBar = false),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -186,6 +198,7 @@ private fun MainScaffold(
         route == "import" -> "Import statement"
         route == "review" -> "Month review"
         route == "categories" -> "Categories"
+        route == "memory" -> "Assistant memory"
         route?.startsWith("income/") == true -> "Income"
         route?.startsWith("balances/") == true -> "Balances"
         route?.startsWith("line/") == true -> entry?.arguments?.getString("line")
@@ -222,24 +235,48 @@ private fun MainScaffold(
         },
         bottomBar = {
             if (!inDetail) NavigationBar {
-                Tab.entries.forEach { tab ->
+                val open = { tab: Tab ->
+                    nav.navigate(tab.route) {
+                        popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                }
+                Tab.entries.filter { it.inBar }.forEach { tab ->
                     NavigationBarItem(
                         selected = route == tab.route,
-                        onClick = {
-                            nav.navigate(tab.route) {
-                                popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
+                        onClick = { open(tab) },
                         icon = { Icon(tab.icon, contentDescription = null) },
                         label = { Text(tab.label) },
                     )
                 }
+                // Receipts, Bills and Settings: a menu, so the bar keeps four tabs.
+                val inMore = Tab.entries.filter { !it.inBar }
+                var moreOpen by remember { mutableStateOf(false) }
+                NavigationBarItem(
+                    selected = inMore.any { it.route == route },
+                    onClick = { moreOpen = true },
+                    icon = {
+                        Box {
+                            Icon(Icons.Filled.MoreHoriz, contentDescription = null)
+                            DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
+                                inMore.forEach { tab ->
+                                    DropdownMenuItem(
+                                        text = { Text(tab.label) },
+                                        leadingIcon = { Icon(tab.icon, contentDescription = null) },
+                                        onClick = { moreOpen = false; open(tab) },
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    label = { Text(inMore.firstOrNull { it.route == route }?.label ?: "More") },
+                )
             }
         },
     ) { padding ->
-        NavHost(nav, startDestination = Tab.Dashboard.route, modifier = Modifier.padding(padding)) {
+        // Consumed, so screens with a text field at the bottom (chat) can add just the keyboard's height.
+        NavHost(nav, startDestination = Tab.Dashboard.route, modifier = Modifier.padding(padding).consumeWindowInsets(padding)) {
             composable(Tab.Dashboard.route) {
                 DashboardScreen(
                     rememberViewModel { DashboardViewModel(api) },
@@ -283,6 +320,8 @@ private fun MainScaffold(
                 ReceiptsScreen(rememberViewModel { ReceiptsViewModel(api) }) { id -> nav.navigate("receipt/$id") }
             }
             composable(Tab.Bills.route) { BillsScreen(rememberViewModel { BillsViewModel(api) }) }
+            composable(Tab.Chat.route) { ChatScreen(rememberViewModel { ChatViewModel(api) }) { nav.navigate("memory") } }
+            composable("memory") { ChatMemoryScreen(rememberViewModel { ChatMemoryViewModel(api) }) }
             composable(Tab.Settings.route) { SettingsScreen(config, api, app.notificationQueue, onChangeServer) { nav.navigate("categories") } }
             composable("categories") { CategoriesScreen(rememberViewModel { CategoriesViewModel(api) }) }
             composable("review") {

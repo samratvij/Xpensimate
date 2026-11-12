@@ -1,5 +1,6 @@
 # A local model instead of Claude: runs Ollama next to Xpensimate, so categorizing and receipt photos never
-# leave your server. Pulls the models on first start (about 6 GB for the default qwen2.5vl:7b), then:
+# leave your server. Pulls the models on first start (about 6 GB for the default qwen2.5vl:7b, and 5 GB more for
+# qwen3:8b, which the Ask chat uses), then:
 #   docker compose -f docker-compose.yml -f compose.ollama.yml up -d
 # Add -f compose.vps.yml as well on a VPS. A 7B model wants ~8 GB of free RAM; on a CPU, expect a few
 # seconds per new merchant and up to a minute or two per receipt. See docs/local-models.md.
@@ -11,6 +12,10 @@ services:
     volumes:
       - ollama:/root/.ollama
     networks: [xpensimate]
+    environment:
+      # The Ask chat sends its tools and the household's categories with every question: more than Ollama's
+      # default context holds.
+      OLLAMA_CONTEXT_LENGTH: "16384"
     # NVIDIA GPU (needs the NVIDIA Container Toolkit): uncomment.
     # deploy:
     #   resources:
@@ -22,11 +27,12 @@ services:
     image: ollama/ollama:latest
     container_name: xpensimate-ollama-pull
     restart: "no"
-    entrypoint: ["sh", "-c", "until ollama list >/dev/null 2>&1; do sleep 1; done; ollama pull \"$$CATEGORIZER\" && ollama pull \"$$RECEIPTS\""]
+    entrypoint: ["sh", "-c", "until ollama list >/dev/null 2>&1; do sleep 1; done; ollama pull \"$$CATEGORIZER\" && ollama pull \"$$RECEIPTS\" && ollama pull \"$$CHAT\""]
     environment:
       OLLAMA_HOST: ollama:11434
       CATEGORIZER: ${CATEGORIZER_MODEL:-qwen2.5vl:7b}
       RECEIPTS: ${RECEIPT_MODEL:-qwen2.5vl:7b}
+      CHAT: ${CHAT_MODEL:-qwen3:8b}
     depends_on: [ollama]
     networks: [xpensimate]
 

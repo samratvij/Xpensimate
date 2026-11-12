@@ -511,3 +511,69 @@ data class BalanceBatch(@SerialName("as_of") val asOf: String, val rows: List<Ba
 
 @Serializable
 data class Me(val user: String)
+
+// Chat assistant (private to whoever's token asks)
+
+@Serializable
+data class ChatAsk(
+    val message: String,
+    @SerialName("thread_id") val threadId: String? = null,
+)
+
+@Serializable
+data class ChatAction(val tool: String, val summary: String)
+
+@Serializable
+data class ChatSource(val url: String, val title: String? = null)
+
+@Serializable
+data class ChatReply(
+    @SerialName("thread_id") val threadId: String,
+    @SerialName("message_id") val messageId: String,
+    val text: String,
+    val actions: List<ChatAction> = emptyList(),
+    val sources: List<ChatSource> = emptyList(),
+    val model: String,
+    @SerialName("questions_left") val questionsLeft: Int? = null,
+)
+
+@Serializable
+data class ChatThread(
+    val id: String,
+    val title: String,
+    @SerialName("updated_at") val updatedAt: String,
+)
+
+@Serializable
+data class ChatMessage(
+    val id: String,
+    /** question | answer */
+    val kind: String,
+    val text: String? = null,
+    val actions: List<ChatAction>? = null,
+    val sources: List<ChatSource>? = null,
+)
+
+@Serializable
+data class ChatThreadDetail(
+    val id: String,
+    val title: String,
+    val messages: List<ChatMessage>,
+    @SerialName("can_continue") val canContinue: Boolean,
+)
+
+@Serializable
+data class ChatMemory(val id: String, val fact: String, @SerialName("created_at") val createdAt: String)
+
+@Serializable
+data class ChatMemoryIn(val fact: String)
+
+@Serializable
+data class ChatUsage(
+    val used: Int,
+    val limit: Int? = null,
+    val left: Int? = null,
+    val available: Boolean,
+    /** Answers can draw on the web (Claude only). */
+    @SerialName("web_search") val webSearch: Boolean = false,
+)

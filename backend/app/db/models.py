@@ -434,3 +434,61 @@ class StatementImport(Base):
     processed: Mapped[int] = mapped_column(Integer, server_default="0")
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = _created_at()
+
+
+class ChatThread(Base):
+    """One conversation with the assistant. Private: only its owner (whose token started it) sees it."""
+
+    __tablename__ = "chat_threads"
+    __table_args__ = (Index("idx_chat_threads_owner", "owner", "updated_at"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    owner: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+    messages: Mapped[list["ChatMessage"]] = relationship(
+        back_populates="thread", cascade="all, delete-orphan", passive_deletes=True, order_by="ChatMessage.seq"
+    )
+
+
+class ChatMessage(Base):
+    """One message of a thread, exactly as sent to / received from the model (append-only, so replays stay valid).
+
+    kind: question (what the person typed) | step (a tool round: Claude's tool calls, or their results) |
+    answer (the model's final message of a turn). The apps show questions and answers.
+    """
+
+    __tablename__ = "chat_messages"
+    __table_args__ = (
+        UniqueConstraint("thread_id", "seq", name="uq_chat_messages_seq"),
+        Index("idx_chat_messages_questions", "kind", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    thread_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("chat_threads.id", ondelete="CASCADE"))
+    seq: Mapped[int] = mapped_column(Integer)
+    role: Mapped[str] = mapped_column(String(16))  # user | assistant
+    kind: Mapped[str] = mapped_column(String(16))
+    content: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
+    # What the apps show: the question, or the answer's text.
+    text: Mapped[str | None] = mapped_column(Text)
+    # On answers: the changes the assistant made this turn, and the web pages it cited.
+    actions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    sources: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    model: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = _created_at()
+
+    thread: Mapped[ChatThread] = relationship(back_populates="messages")
+
+
+class ChatMemory(Base):
+    """Something a person told the assistant to keep in mind (plans, goals, circumstances). Private to them."""
+
+    __tablename__ = "chat_memories"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    owner: Mapped[str] = mapped_column(String(32), index=True)
+    fact: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = _created_at()

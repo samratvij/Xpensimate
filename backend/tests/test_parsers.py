@@ -69,7 +69,7 @@ def test_unexpected_wording_does_not_parse():
         ("PC Financial <info@account.pcfinancial.ca>", pc_financial),
         ("Canadian Tire Bank <donotreply@ctfs.com>", ctfs),
         ("RBC Royal Bank Alerts <rbcroyalbankalerts@alerts.rbc.com>", rbc),
-        ("SAM GUPTA <notify@payments.interac.ca>", None),
+        ("SAM TAYLOR <notify@payments.interac.ca>", None),
         ("Phish <alerts@rbc.com.example.net>", None),
         ("Phish <alerts@tangerine.ca.example.com>", None),
         ("someone@nottangerine.ca", None),

@@ -127,7 +127,8 @@ def ai_check() -> HealthCheck:
     where = "Claude" if settings.llm_provider == "anthropic" else f"Model server {settings.llm_base_url}"
     return HealthCheck(
         name="AI model", status="ok",
-        detail=f"{where}. Categorizing with {settings.categorizer()}, receipts with {settings.receipt_reader()}.",
+        detail=f"{where}. Categorizing with {settings.categorizer()}, receipts with {settings.receipt_reader()}, "
+               f"the Ask chat with {settings.chat_models()[0]}.",
     )
 
 

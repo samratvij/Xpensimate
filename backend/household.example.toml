@@ -77,3 +77,23 @@ name = "RBC Visa (Sam)"
 card_last4 = "4321"
 kind = "credit_card"
 owner = "Sam"
+
+# Bank accounts: pay lands in chequing; savings and investments make up the savings rate and net worth.
+[[accounts]]
+id = "tangerine_cheq"
+institution = "Tangerine"
+name = "Tangerine Chequing"
+kind = "chequing"
+
+[[accounts]]
+id = "tangerine_savings"
+institution = "Tangerine"
+name = "Tangerine Savings"
+kind = "savings"
+
+[[accounts]]
+id = "ws_invest"
+institution = "Wealthsimple"
+name = "Wealthsimple Investing"
+kind = "investment"
+owner = "Alex"

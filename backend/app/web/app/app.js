@@ -137,6 +137,8 @@ const state = {
   balancesMonth: thisMonth(),
   insightsExpanded: false,
   tab: "home",
+  // A chat answer is streaming: don't re-render the screen under it.
+  chatBusy: false,
 };
 
 async function accounts() {
@@ -1259,6 +1261,7 @@ async function moreScreen(ctx) {
       ${link("#/balances", "🏦", "Balances and net worth", "What each account holds, from screenshots")}
       ${link("#/savings", "🎯", "Savings target and goals", "How much to put away, and what for")}
       ${link("#/categories", "🏷️", "Categories", "Add, rename or merge")}
+      ${link("#/memory", "🧠", "Assistant memory", "Plans and facts the assistant keeps in mind")}
       ${link("/import", "📄", "Import a statement", "CSV or RBC PDF (easier on a computer)")}
       ${link("#/history", "🗂️", "Import past spending", "From a spreadsheet or another app")}
     </div>
@@ -1461,6 +1464,203 @@ async function categoriesScreen(ctx) {
     };
     draw();
   });
+}
+
+// ---------- chat assistant ----------
+/** Whole amounts in the household's currency, for example questions: "$3,000", "€3.000", "₹3,000". */
+const roughMoney = n => new Intl.NumberFormat(undefined, { style: "currency", currency: moneyFormat.resolvedOptions().currency,
+                                                           currencyDisplay: "narrowSymbol", maximumFractionDigits: 0 }).format(n);
+const chatExamples = () => [
+  "How much did we spend eating out in the last 3 months?",
+  `Can we afford a ${roughMoney(3000)} trip in March?`,
+  `We're planning to buy a car next summer, about ${roughMoney(25000)}. Keep that in mind.`,
+  "What should I cut back on this month?",
+];
+
+/** The assistant's plain-text answer as HTML: escaped, with **bold** kept. Line breaks come from CSS (pre-wrap). */
+const chatText = t => esc(t).replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
+
+function chatBubble(m) {
+  if (m.kind === "question") return `<div class="bubble me">${esc(m.text)}</div>`;
+  const actions = (m.actions ?? []).map(a => `<div class="chat-action">✅ ${esc(a.summary)}</div>`).join("");
+  const sources = (m.sources ?? []).map(s =>
+    `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title || new URL(s.url).hostname)}</a>`).join(" · ");
+  return `<div class="bubble ai"><div data-text>${chatText(m.text ?? "")}</div>${actions ? `<div data-actions>${actions}</div>` : `<div data-actions></div>`}
+    ${sources ? `<div class="tiny muted chat-sources">Sources: ${sources}</div>` : ""}</div>`;
+}
+
+/** POST /chat as server-sent events; calls on(event, data) for each. */
+async function streamChat(body, on) {
+  let resp;
+  try {
+    resp = await fetch("/api/v1/chat", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token()}`, "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new ApiError(0, "Can't reach the server. Is Tailscale on?");
+  }
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => null);
+    throw new ApiError(resp.status, errorDetail(data) || `Server error ${resp.status}.`);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let cut;
+    while ((cut = buffer.indexOf("\n\n")) >= 0) {
+      const block = buffer.slice(0, cut);
+      buffer = buffer.slice(cut + 2);
+      const name = block.match(/^event: (.*)$/m)?.[1];
+      const data = block.match(/^data: (.*)$/m)?.[1];
+      if (name && data) on(name, JSON.parse(data));
+    }
+  }
+}
+
+async function chatScreen(ctx, threadId) {
+  const [usage, thread] = await Promise.all([
+    api("/chat/usage"),
+    threadId ? api(`/chat/threads/${threadId}`) : Promise.resolve(null),
+  ]);
+  if (!ctx.alive()) return;
+  if (thread) ctx.title(thread.title);
+  let currentId = thread?.id ?? null;
+  let left = usage.left;
+
+  ctx.view.innerHTML = `<div class="chat">
+    <div class="row chat-bar">
+      <button class="link" data-history>History</button><span class="grow"></span>
+      <span class="tiny muted" data-left></span>
+      <button class="link" data-new ${thread ? "" : "hidden"}>New chat</button>
+    </div>
+    <div data-log class="chat-log">${thread ? thread.messages.map(chatBubble).join("") : `
+      <div class="card stack" data-empty>
+        <div><b>Ask about your money</b></div>
+        <div class="small muted">Questions about spending, budgets and bills, plans you want help with, or changes
+          (“set the grocery budget to ${roughMoney(800)}”). It uses your transactions, receipts, bills and balances, what
+          you've told it to remember${usage.web_search ? ", and the web" : ""}. Your chats are private to you.</div>
+        <div class="chips">${chatExamples().map(q => `<button class="chip" data-example>${esc(q)}</button>`).join("")}</div>
+      </div>`}</div>
+    <form class="chat-compose" data-form>
+      <textarea data-input rows="1" maxlength="4000" placeholder="Ask or tell me something…" enterkeyhint="send"></textarea>
+      <button class="btn" data-send aria-label="Send">↑</button>
+    </form>
+  </div>`;
+  const log = $("[data-log]", ctx.view), input = $("[data-input]", ctx.view), send = $("[data-send]", ctx.view);
+  const showLeft = () => { $("[data-left]", ctx.view).textContent = left == null ? "" : `${plural(left, "question")} left this month`; };
+  showLeft();
+  const scrollDown = () => window.scrollTo(0, document.body.scrollHeight);
+  scrollDown();
+  if (!usage.available) { input.disabled = send.disabled = true; input.placeholder = "Chat needs an AI model set up on the server"; }
+  if (thread && !thread.can_continue) { input.disabled = send.disabled = true; input.placeholder = "This chat is full: start a new one"; }
+
+  const grow = () => { input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 140)}px`; };
+  input.oninput = grow;
+  input.onkeydown = e => { if (e.key === "Enter" && !e.shiftKey && !matchMedia("(pointer: coarse)").matches) { e.preventDefault(); ask(); } };
+  $$("[data-example]", ctx.view).forEach(b => b.onclick = () => { input.value = b.textContent; grow(); input.focus(); });
+  $("[data-form]", ctx.view).onsubmit = e => { e.preventDefault(); ask(); };
+  $("[data-new]", ctx.view).onclick = () => { location.hash = "#/ask"; };
+  $("[data-history]", ctx.view).onclick = () => chatHistory();
+
+  async function ask() {
+    const message = input.value.trim();
+    if (!message || state.chatBusy) return;
+    state.chatBusy = true;
+    send.disabled = true;
+    input.value = "";
+    grow();
+    $("[data-empty]", log)?.remove();
+    log.insertAdjacentHTML("beforeend", chatBubble({ kind: "question", text: message }));
+    log.insertAdjacentHTML("beforeend", `<div class="bubble ai pending"><div data-text></div><div data-actions></div>
+      <div class="tiny muted" data-status>Thinking…</div></div>`);
+    const bubble = log.lastElementChild;
+    const textEl = $("[data-text]", bubble), statusEl = $("[data-status]", bubble);
+    let answer = "";
+    scrollDown();
+    try {
+      await streamChat({ message, thread_id: currentId }, (name, data) => {
+        if (name === "thread") {
+          currentId = data.thread_id;
+          if (ctx.alive()) { ctx.title(data.title); $("[data-new]", ctx.view).hidden = false; }
+          history.replaceState(null, "", `#/ask/${currentId}`);
+        } else if (name === "text") {
+          answer += data.text;
+          textEl.innerHTML = chatText(answer);
+          statusEl.hidden = true;
+        } else if (name === "status") {
+          statusEl.textContent = `${data.text}…`;
+          statusEl.hidden = false;
+        } else if (name === "action") {
+          $("[data-actions]", bubble).insertAdjacentHTML("beforeend", `<div class="chat-action">✅ ${esc(data.summary)}</div>`);
+        } else if (name === "done") {
+          bubble.outerHTML = chatBubble({ kind: "answer", ...data });
+          left = data.questions_left;
+          showLeft();
+          if (data.actions.length) state.taxonomy = null;  // budgets or categories may have changed
+        } else if (name === "error") {
+          throw new ApiError(502, data.detail);
+        }
+        scrollDown();
+      });
+    } catch (e) {
+      bubble.classList.remove("pending");
+      statusEl.hidden = false;
+      statusEl.innerHTML = `<span class="err">${esc(e.message)}</span>`;
+      if (!answer) input.value = message;
+    } finally {
+      state.chatBusy = false;
+      send.disabled = false;
+    }
+  }
+}
+
+async function chatHistory() {
+  const threads = await api("/chat/threads").catch(e => { toast(e.message); return null; });
+  if (!threads) return;
+  const sheet = openSheet(`<h2>Your chats</h2>${threads.length ? `<div class="card flush list">${threads.map(t => `
+    <div class="item static"><a class="grow" href="#/ask/${t.id}" data-open><div class="ellipsis">${esc(t.title)}</div>
+      <div class="sub">${esc(fmtWhen(t.updated_at))}</div></a>
+      <button class="icon-btn" data-delete="${t.id}" aria-label="Delete chat"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg></button></div>`).join("")}</div>`
+    : `<p class="muted">No chats yet.</p>`}<button class="btn text" data-close>Close</button>`);
+  $$("[data-open]", sheet).forEach(a => a.addEventListener("click", closeSheet));
+  $$("[data-delete]", sheet).forEach(b => b.onclick = async () => {
+    try {
+      await api(`/chat/threads/${b.dataset.delete}`, { method: "DELETE" });
+      b.closest(".item").remove();
+      if (location.hash === `#/ask/${b.dataset.delete}`) { closeSheet(); location.hash = "#/ask"; }
+    } catch (e) { toast(e.message); }
+  });
+}
+
+async function memoryScreen(ctx) {
+  const memories = await api("/chat/memory");
+  if (!ctx.alive()) return;
+  ctx.view.innerHTML = `<div class="stack">
+    <div class="small muted">Plans and facts the assistant keeps in mind when you chat. Only you see these. Tell it in chat,
+      or add one here.</div>
+    ${memories.length ? `<div class="card flush list">${memories.map(m => `<div class="item static"><div class="grow">
+      <div style="white-space:normal">${esc(m.fact)}</div><div class="sub">${esc(fmtDate(m.created_at))}</div></div>
+      <button class="icon-btn" data-delete="${m.id}" aria-label="Forget"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg></button></div>`).join("")}</div>`
+      : `<p class="muted center">Nothing yet.</p>`}
+    <form class="card stack" data-form><label class="field">Add something to remember
+      <input data-fact maxlength="500" placeholder="e.g. Saving ${esc(roughMoney(5000))} for a car by June"></label>
+      <button class="btn">Add</button></form>
+  </div>`;
+  $$("[data-delete]", ctx.view).forEach(b => b.onclick = async () => {
+    try { await api(`/chat/memory/${b.dataset.delete}`, { method: "DELETE" }); route(); } catch (e) { toast(e.message); }
+  });
+  $("[data-form]", ctx.view).onsubmit = async e => {
+    e.preventDefault();
+    const fact = $("[data-fact]", ctx.view).value.trim();
+    if (fact.length < 3) return;
+    try { await api("/chat/memory", { method: "POST", body: { fact } }); route(); } catch (err) { toast(err.message); }
+  };
 }
 
 function signInScreen(view) {
@@ -1899,6 +2099,8 @@ const ROUTES = [
   { re: /^\/transactions$/, screen: transactionsScreen, title: "Spending", tab: "transactions" },
   { re: /^\/receipts$/, screen: receiptsScreen, title: "Receipts", tab: "receipts" },
   { re: /^\/bills$/, screen: billsScreen, title: "Bills", tab: "bills" },
+  { re: /^\/ask$/, screen: chatScreen, title: "Ask", tab: "ask" },
+  { re: /^\/ask\/([0-9a-f-]+)$/, screen: chatScreen, title: "Ask", tab: "ask" },
   { re: /^\/more$/, screen: moreScreen, title: "More", tab: "more" },
   { re: /^\/line\/([^/]+)\/(\d{4}-\d{2})$/, screen: lineScreen, title: "" },
   { re: /^\/txn\/([0-9a-f-]+)$/, screen: transactionScreen, title: "Transaction" },
@@ -1907,6 +2109,7 @@ const ROUTES = [
   { re: /^\/budgets$/, screen: budgetsScreen, title: "Budgets", parent: "more" },
   { re: /^\/alerts$/, screen: alertsScreen, title: "Budget alerts", parent: "more" },
   { re: /^\/categories$/, screen: categoriesScreen, title: "Categories", parent: "more" },
+  { re: /^\/memory$/, screen: memoryScreen, title: "Assistant memory", parent: "more" },
   { re: /^\/household$/, screen: householdScreen, title: "Household", parent: "more" },
   { re: /^\/history$/, screen: historyScreen, title: "Import past spending", parent: "more" },
   { re: /^\/income$/, screen: incomeScreen, title: "Income", parent: "home" },
@@ -1988,6 +2191,7 @@ $$("#tabs a").forEach(a => a.addEventListener("click", e => {
 window.addEventListener("hashchange", route);
 // Coming back to the app after a while (e.g. from the home screen icon): show fresh numbers.
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && token() && !$("#sheet-root").children.length && Date.now() - lastRender > 60_000) route();
+  if (document.visibilityState === "visible" && token() && !$("#sheet-root").children.length && !state.chatBusy &&
+      state.tab !== "ask" && Date.now() - lastRender > 60_000) route();
 });
 route();

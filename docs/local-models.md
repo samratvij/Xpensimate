@@ -1,8 +1,8 @@
 # Running a local model instead of Claude
 
-Xpensimate uses an AI model for two things: sorting a merchant it has never seen (after your rules and
-history) and reading receipt photos. By default that's Claude. You can run an open model on your own
-server instead, so nothing leaves it.
+Xpensimate uses an AI model for sorting a merchant it has never seen (after your rules and history), reading
+receipt photos and bank app screenshots, and the Ask chat. By default that's Claude. You can run open models on
+your own server instead, so nothing leaves it.
 
 Anything that speaks the OpenAI chat completions API works: [Ollama](https://ollama.com),
 [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server`, [vLLM](https://docs.vllm.ai),
@@ -15,7 +15,8 @@ cd Xpensimate/backend
 docker compose -f docker-compose.yml -f compose.ollama.yml up -d --build
 ```
 
-The overlay starts Ollama, downloads the model once (about 6 GB), and points Xpensimate at it. On a VPS add
+The overlay starts Ollama, downloads the models once (about 6 GB for receipts and categorizing, 5 GB more for
+the chat), and points Xpensimate at it. On a VPS add
 `-f compose.vps.yml` too. Check More → Health in the app: "AI model" should name your model server.
 
 ## Picking a model
@@ -24,6 +25,8 @@ The overlay starts Ollama, downloads the model once (about 6 GB), and points Xpe
 |---|---|---|
 | Categorizing (`CATEGORIZER_MODEL`) | `qwen2.5vl:7b` | A short classification: any decent 7B+ instruct model does it. |
 | Receipts (`RECEIPT_MODEL`) | `qwen2.5vl:7b` | Must understand images (a "vision" or "VL" model). |
+| Bank screenshots (`SCREENSHOT_MODEL`) | `qwen2.5vl:7b` | Also needs images. |
+| Ask chat (`CHAT_MODEL`) | `qwen3:8b` | Must support tool calling; larger models plan better. |
 
 One vision model for both keeps memory use down, since the server only holds one. To use others, set them
 in `.env` (the overlay pulls whatever you name) and restart:
@@ -61,6 +64,11 @@ in `docker-compose.yml`, and make Ollama listen beyond localhost (`OLLAMA_HOST=0
 ```
 
 `LLM_TIMEOUT` (seconds, default 180) is how long Xpensimate waits for one answer.
+
+**The Ask chat** sends its tool definitions and your categories with every question, which is more than
+Ollama's default context window holds. The overlay sets `OLLAMA_CONTEXT_LENGTH=16384`; on your own Ollama, set
+the same environment variable. Local models answer without web search, and a question that needs several
+lookups can take a minute on a CPU.
 
 ## How it works
 

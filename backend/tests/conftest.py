@@ -19,7 +19,7 @@ from app.db.base import SessionLocal, engine  # noqa: E402
 from app.db.seed import seed  # noqa: E402
 from main import app  # noqa: E402
 
-TABLES = "savings_goals, savings_targets, balance_snapshots, income_sources, insight_dismissals, budget_alerts, devices, receipt_items, transaction_items, receipts, transactions, statement_imports, recurring_expenses, raw_ingest_log, budget_envelopes, categorization_rules, categorization_examples, gmail_sync_state, categories, accounts"
+TABLES = "chat_memories, chat_messages, chat_threads, savings_goals, savings_targets, balance_snapshots, income_sources, insight_dismissals, budget_alerts, devices, receipt_items, transaction_items, receipts, transactions, statement_imports, recurring_expenses, raw_ingest_log, budget_envelopes, categorization_rules, categorization_examples, gmail_sync_state, categories, accounts"
 
 
 @pytest.fixture(scope="session", autouse=True)

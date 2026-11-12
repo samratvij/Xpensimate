@@ -180,6 +180,32 @@ interface Api {
 
     @GET("api/v1/alerts")
     suspend fun alerts(@Query("limit") limit: Int = 100): List<BudgetAlert>
+
+    // Chat assistant: answers come back whole (the web app streams them)
+
+    @POST("api/v1/chat")
+    suspend fun ask(@Body body: ChatAsk): ChatReply
+
+    @GET("api/v1/chat/usage")
+    suspend fun chatUsage(): ChatUsage
+
+    @GET("api/v1/chat/threads")
+    suspend fun chatThreads(): List<ChatThread>
+
+    @GET("api/v1/chat/threads/{id}")
+    suspend fun chatThread(@Path("id") id: String): ChatThreadDetail
+
+    @DELETE("api/v1/chat/threads/{id}")
+    suspend fun deleteChatThread(@Path("id") id: String): Response<Unit>
+
+    @GET("api/v1/chat/memory")
+    suspend fun chatMemory(): List<ChatMemory>
+
+    @POST("api/v1/chat/memory")
+    suspend fun addChatMemory(@Body body: ChatMemoryIn): ChatMemory
+
+    @DELETE("api/v1/chat/memory/{id}")
+    suspend fun deleteChatMemory(@Path("id") id: String): Response<Unit>
 }
 
 val json = Json {
@@ -190,8 +216,9 @@ val json = Json {
 fun createApi(config: ServerConfig): Api {
     val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
-        // Categorizing waits on Claude for seconds; reading a receipt photo can take half a minute.
-        .readTimeout(120, TimeUnit.SECONDS)
+        // Categorizing waits on the AI model for seconds; reading a receipt photo can take half a minute, and a chat
+        // answer that searches the web (or runs on a local model) longer.
+        .readTimeout(240, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .addInterceptor { chain ->
             chain.proceed(chain.request().newBuilder().header("Authorization", "Bearer ${config.token}").build())

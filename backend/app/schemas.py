@@ -787,3 +787,83 @@ class SavingsPlanOut(BaseModel):
     target: SavingsTargetOut | None
     progress: TargetProgressOut | None
     goals: list[GoalOut]
+
+
+# ---- Chat assistant ----
+
+CHAT_MESSAGE_MAX = 4000
+
+
+class ChatIn(BaseModel):
+    message: str = Field(min_length=1, max_length=CHAT_MESSAGE_MAX)
+    # Omit to start a new conversation.
+    thread_id: uuid.UUID | None = None
+
+
+class ChatAction(BaseModel):
+    tool: str
+    summary: str
+
+
+class ChatSource(BaseModel):
+    url: str
+    title: str | None = None
+
+
+class ChatReply(BaseModel):
+    thread_id: uuid.UUID
+    message_id: uuid.UUID
+    text: str
+    # Changes the assistant made while answering (budgets, transactions, bills, memories).
+    actions: list[ChatAction]
+    sources: list[ChatSource]
+    model: str
+    questions_left: int | None
+
+
+class ChatThreadOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    title: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ChatMessageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    # question | answer
+    kind: str
+    text: str | None
+    actions: list[ChatAction] | None = None
+    sources: list[ChatSource] | None = None
+    created_at: datetime
+
+
+class ChatThreadDetail(ChatThreadOut):
+    messages: list[ChatMessageOut]
+    # False once the thread is too long to continue: ask in a new one.
+    can_continue: bool
+
+
+class ChatMemoryIn(BaseModel):
+    fact: str = Field(min_length=3, max_length=500)
+
+
+class ChatMemoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    fact: str
+    created_at: datetime
+
+
+class ChatUsageOut(BaseModel):
+    used: int
+    limit: int | None
+    left: int | None
+    available: bool
+    # Whether answers can draw on the web (Claude only).
+    web_search: bool = False

@@ -123,7 +123,15 @@ put in and what the market did. Set a monthly savings target and goals with a da
 </td>
 </tr>
 <tr>
-<td valign="top" colspan="2">
+<td valign="top">
+
+### 💬 Ask about your money
+A chat assistant over your own numbers: "how much did we spend eating out since summer?", "can we afford
+a trip in March?", "set the grocery budget to 800". It can change data when you ask, remembers plans you
+tell it, and with Claude searches the web for prices and rules. Each person's chats are private.
+
+</td>
+<td valign="top">
 
 ### 🔒 Private by design
 Self-hosted, read-only Gmail access, outbound-only push, a home-server setup with nothing exposed to the
@@ -279,7 +287,7 @@ On first launch, enter your server address and your API token.
 <br>
 
 The server serves a full web app at `/app/`: dashboard, activity, transaction edits and splits, receipt
-uploads, bills, budgets, month review, alerts and categories. Plain HTML and JavaScript, no build step.
+uploads, bills, budgets, month review, alerts, categories, income, balances, savings goals and the Ask chat. Plain HTML and JavaScript, no build step.
 On an iPhone, open it in Safari and use **Share → Add to Home Screen**. Browsers need HTTPS: on a home
 server, `tailscale serve` provides it ([docs/hosting.md](docs/hosting.md)).
 
@@ -348,6 +356,37 @@ and a category and purpose. `POST /recurring/detect` finds steady series in past
 whose merchant and amount fit is linked as the payment; payments made outside your cards (rent by
 e-transfer) are recorded with `POST /recurring/{id}/paid`. The summary adds `expected` and `projected`
 (spent + expected) per budget line.
+
+</details>
+
+<details>
+<summary><b>💬 Ask (chat assistant)</b></summary>
+
+<br>
+
+The **Ask** tab (web app and Android) answers questions about the household's money and helps plan. The model
+gets tools over the same services the apps use, so its numbers match the screens: the month's budgets, income
+and savings, the monthly trend, the month review, transaction and receipt-line search, bills, balances and net
+worth, savings goals and insight cards. Totals come from the database, never from the model's arithmetic.
+
+It can change data when asked clearly (re-file a transaction or mark it not an expense, set a budget, add,
+change or mark paid a bill), through the same code paths as the apps, so edits are recorded under your name and
+re-checked against budgets. Changes are listed under the answer. Plans and facts you tell it to keep in mind
+are saved per person (More → Assistant memory) and given to it in every chat.
+
+| Setting | Default | |
+|---|---|---|
+| `CHAT_MODEL` | `claude-sonnet-5-5`, or `qwen3:8b` with a local server | Must support tool calling. |
+| `CHAT_FALLBACK_MODEL` | `claude-haiku-5-5`, or none | Takes over when the first is overloaded; `none` turns it off. |
+| `CHAT_MONTHLY_LIMIT` | `100` | Questions per person per month; `0` = no limit. |
+| `CHAT_WEB_SEARCHES` | `3` | Web searches per question (Claude only); `0` turns web search off. |
+| `CHAT_LOCATION` | empty | `City, Region, CC` or a country code, so searches find local prices and rules. |
+
+With a local model ([docs/local-models.md](docs/local-models.md)) the chat uses the same tools through function
+calling, without web search. Chats and memories are private: each person only sees their own (by API token).
+API: `POST /api/v1/chat` (`{message, thread_id?}`; server-sent events with `Accept: text/event-stream`, otherwise
+JSON), `GET /chat/threads`, `GET|DELETE /chat/threads/{id}`, `GET|POST /chat/memory`, `DELETE /chat/memory/{id}`,
+`GET /chat/usage`.
 
 </details>
 
@@ -431,8 +470,9 @@ More on the design choices: **[docs/architecture.md](docs/architecture.md)**.
 ## 🔒 Privacy and security
 
 - Your data lives in your own Postgres database. The only thing that leaves it is what Claude needs, and
-  only if you add an API key: merchant names, amounts and notes for categorizing, and receipt photos for
-  reading. With a local model, nothing leaves your server at all.
+  only if you add an API key: merchant names, amounts and notes for categorizing, receipt photos for
+  reading, and, when you use Ask, your question and the numbers its tools look up. With a local model,
+  nothing leaves your server at all.
 - Gmail access is read-only, and only alert emails from known bank senders are parsed; statements, offers
   and one-time codes are ignored and never stored.
 - On a home server the API listens only on your Tailscale network. On a VPS it sits behind Caddy with HTTPS.
@@ -451,6 +491,7 @@ More on the design choices: **[docs/architecture.md](docs/architecture.md)**.
 - [x] Local open models (Ollama or any OpenAI-compatible server) instead of Claude
 - [x] Income by person, transfers and a savings rate, balances and net worth, savings target and goals
 - [x] Usual grocery and fuel spend counted as still to come; subscription renewal reminders
+- [x] Ask: a chat assistant over the household's data (Claude or a local model)
 - [ ] Banks beyond Canada (contributions very welcome)
 - [ ] Optional encrypted off-site backups
 

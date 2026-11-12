@@ -10,6 +10,12 @@ DEFAULT_MODELS = {
     "anthropic": ("claude-haiku-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"),
     "openai": ("qwen2.5vl:7b", "qwen2.5vl:7b", "qwen2.5vl:7b"),
 }
+# Provider -> (chat assistant, its fallback when the first is overloaded). The assistant calls tools, which the
+# vision model above doesn't do, so a local server needs a second model for it.
+DEFAULT_CHAT_MODELS = {
+    "anthropic": ("claude-sonnet-5-5", "claude-haiku-5-5"),
+    "openai": ("qwen3:8b", ""),
+}
 
 
 class Settings(BaseSettings):
@@ -50,6 +56,26 @@ class Settings(BaseSettings):
 
     def screenshot_reader(self) -> str:
         return self.screenshot_model or DEFAULT_MODELS[self.llm_provider][2]
+
+    # The chat assistant (the Ask tab). Empty means the provider's default (DEFAULT_CHAT_MODELS); a fallback model
+    # takes over the rest of an answer when the first is overloaded or unreachable ("none" turns it off).
+    chat_model: str = ""
+    chat_fallback_model: str = ""
+    chat_effort: str = "medium"
+    # Questions each person can ask per calendar month (local time); 0 turns the limit off.
+    chat_monthly_limit: int = 100
+    # Web searches Claude may run while answering one question (Claude only; 0 turns web search off).
+    chat_web_searches: int = 3
+    # Where the household is, so web searches find local prices and rules: "City, Region, CC" (a two-letter
+    # country code), or just "CC". Empty: no location beyond the time zone.
+    chat_location: str = ""
+
+    def chat_models(self) -> list[str]:
+        """The chat model, then its fallback if there is one."""
+        default_model, default_fallback = DEFAULT_CHAT_MODELS[self.llm_provider]
+        model = self.chat_model or default_model
+        fallback = self.chat_fallback_model or default_fallback
+        return [model] + ([fallback] if fallback and fallback != "none" and fallback != model else [])
 
     receipts_dir: str = "/app/data/receipts"
     # Firebase service account (docs/firebase-setup.md); push is off when the file is missing.
