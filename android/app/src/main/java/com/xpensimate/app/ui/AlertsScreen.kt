@@ -67,6 +67,7 @@ fun AlertsScreen(vm: AlertsViewModel, onOpenTransaction: (String) -> Unit) {
 @Composable
 private fun AlertRow(alert: BudgetAlert, onClick: (() -> Unit)?) {
     val exceeded = alert.level == "EXCEEDED"
+    val saving = alert.level == "BEHIND" || alert.level == "SHORT"
     val color = if (exceeded) MaterialTheme.colorScheme.error else Color(0xFFE08A00)
     Row(
         Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
@@ -77,10 +78,15 @@ private fun AlertRow(alert: BudgetAlert, onClick: (() -> Unit)?) {
         Icon(if (exceeded) Icons.Filled.Error else Icons.Filled.Warning, contentDescription = null, tint = color)
         Column(Modifier.weight(1f)) {
             val percent = (alert.spent / alert.monthlyLimit * 100).roundToInt()
-            Text(if (exceeded) "Over budget: ${alert.budgetLine}" else "${alert.budgetLine} at $percent%",
+            Text(when {
+                alert.level == "BEHIND" -> "Behind on savings: $percent% of the target"
+                alert.level == "SHORT" -> "${java.time.YearMonth.parse(alert.month).title()} savings finished short"
+                exceeded -> "Over budget: ${alert.budgetLine}"
+                else -> "${alert.budgetLine} at $percent%"
+            },
                 style = MaterialTheme.typography.bodyLarge)
             Text(
-                "${alert.spent.money()} of ${alert.monthlyLimit.money()} · " +
+                "${alert.spent.money()}${if (saving) " moved" else ""} of ${alert.monthlyLimit.money()} · " +
                     parseInstant(alert.createdAt).atZone(zone).format(alertTime),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

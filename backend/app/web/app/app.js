@@ -262,13 +262,14 @@ function noteBox(container, value, onSave, { placeholder = NOTE_HINT } = {}) {
 async function homeScreen(ctx) {
   const m = state.homeMonth, who = state.purpose;
   const q = who ? `&purpose=${enc(who)}` : "";
-  const [summary, trend, tax, insights, worth] = await Promise.all([
+  const [summary, trend, tax, insights, worth, plan] = await Promise.all([
     api(`/summary?month=${m}${q}`),
     api(`/trends?months=${TREND_MONTHS}${q}`).catch(() => []),
     taxonomy(),
     // Insights are about the current month only.
     m === thisMonth() ? api(`/insights${who ? `?purpose=${enc(who)}` : ""}`).catch(() => []) : [],
     who ? null : api(`/balances?month=${m}`).catch(() => null),
+    who || m !== thisMonth() ? null : api("/savings").catch(() => null),
   ]);
   if (!ctx.alive()) return;
 
@@ -362,7 +363,7 @@ async function homeScreen(ctx) {
       ${status}</a>`;
   }).join("") : `<p class="muted center">No spending this month yet.</p>`;
 
-  ctx.view.innerHTML = monthBar(m) + `<div class="stack">${insightsSection(insights)}${hero}${incomeCard}${netWorthCard(worth)}${trendCard}${chips}${lineCards}</div>`;
+  ctx.view.innerHTML = monthBar(m) + `<div class="stack">${insightsSection(insights)}${hero}${incomeCard}${savingsCard(summary.savings, plan)}${netWorthCard(worth)}${trendCard}${chips}${lineCards}</div>`;
   bindMonthBar(ctx.view, "homeMonth");
   bindInsights(ctx.view, insights, m, who);
   $$("[data-income]", ctx.view).forEach(a => a.onclick = () => { state.incomeMonth = m; });
@@ -1027,55 +1028,92 @@ function sourceSheet(source, accounts) {
 }
 
 // ---------- savings target and goals ----------
-const GOAL_KINDS = [["savings", "Savings"], ["investment", "Investment"], ["retirement", "Retirement"]];
-const TARGET_STATUS = { met: "✓ Met", on_track: "On track", behind: "Behind" };
+// Kinds of account a goal can count as a whole; single accounts of any other kind can be added one by one.
+const GOAL_KINDS = [["savings", "Savings"], ["investment", "Investment"], ["retirement", "Retirement"], ["chequing", "Chequing"]];
+const TARGET_STATUS = { met: "Target met ✓", on_track: "On track", behind: "Behind target" };
+const isoDay = iso => fmtDate(`${iso}T12:00:00`);
+
+function goalLine(g, { named = true } = {}) {
+  const left = g.remaining > 0
+    ? (g.required_monthly != null ? `${money(g.required_monthly)}/month to reach it by ${isoDay(g.target_date)}`
+      : `${money(g.remaining)} short; the date has passed`)
+    : "Reached ✓";
+  return `<div style="margin-top:${named ? 10 : 4}px"><div class="row"><div class="grow" style="font-weight:600">${named ? esc(g.name) : ""}</div>
+      <span class="small">${money(g.current)} of ${money(g.target_amount)}</span></div>
+    ${progress(g.current, g.current, g.target_amount)}<div class="small muted">${pct(g.percent)} · ${esc(left)}</div></div>`;
+}
+
+/** The dashboard's "Savings this month": moved into savings and investments against the target, and the goals. */
+function savingsCard(sav, plan) {
+  if (!sav || sav.target == null) return "";
+  const status = sav.target_status;
+  return `<a class="card" href="#/savings" style="display:block;color:inherit">
+    <div class="row"><span class="badge" aria-hidden="true">🐷</span><div class="grow"><div style="font-weight:600">Savings this month</div>
+      <div class="small ${status === "behind" ? "warn-text" : "muted"}">${esc(TARGET_STATUS[status] ?? "")} · income less spending ${money(sav.kept)}</div></div>
+      <span class="amt">${money(sav.moved)}<span class="small muted"> / ${money(sav.target)}</span></span></div>
+    ${progress(Math.max(0, sav.moved), Math.max(0, sav.moved), sav.target, { warn: status === "behind" })}
+    ${(plan?.goals ?? []).filter(g => g.active).map(g => goalLine(g)).join("")}</a>`;
+}
 
 async function savingsScreen(ctx) {
   const [plan, accounts] = await Promise.all([api("/savings"), api("/accounts")]);
   if (!ctx.alive()) return;
   const t = plan.target, p = plan.progress;
   ctx.view.innerHTML = `<div class="stack">
-    <div class="card stack"><h3>Monthly savings target</h3>
-      <div class="small muted">How much the household means to move into savings and investments each month. Money moved
-        between your own accounts counts; pay left sitting in chequing doesn't.</div>
-      ${p ? `<div class="row"><div class="grow"><div class="small muted">${esc(monthTitle(p.month))}</div>
-          <div style="font-size:22px;font-weight:600">${money(p.saved)} <span class="small muted">of ${money(p.target)}</span></div></div>
-          <span class="small">${esc(TARGET_STATUS[p.status] ?? p.status)}</span></div>
-        <div class="progress"><span class="spent" style="width:${Math.min(100, p.percent)}%"></span></div>` : ""}
-      <label class="field">Each month<input data-target inputmode="decimal" value="${t ? esc(centsText(toCents(t.monthly_amount))) : ""}" placeholder="e.g. 1000.00"></label>
-      <label class="field">Remind me if behind on day<input data-alert-day inputmode="numeric" value="${t?.alert_day ?? 25}" maxlength="2"></label>
-      <p class="err" data-target-error></p>
-      <button class="btn" data-save-target>${t ? "Save target" : "Set a target"}</button>
+    <div class="card">
+      <div class="row"><h3 class="grow">Monthly savings target</h3><button class="link" data-target>${t ? "Edit" : "Set"}</button></div>
+      ${t && Number(t.monthly_amount) > 0 && p ? `
+        <div style="font-size:24px;font-weight:700;margin-top:6px">${money(p.saved)} <span class="small muted">of ${money(p.target)} this month</span></div>
+        ${progress(Math.max(0, p.saved), Math.max(0, p.saved), p.target, { warn: p.status === "behind" })}
+        <div class="small ${p.status === "behind" ? "warn-text" : "muted"}">${esc(TARGET_STATUS[p.status] ?? p.status)}${p.remaining > 0 ? ` · ${money(p.remaining)} to go` : ""}</div>
+        <div class="small muted" style="margin-top:6px">Counts money moved into savings and investment accounts; pay left in chequing
+          doesn't. Income less spending this month: ${money(p.kept)}. From day ${t.alert_day}, under ${pct(t.warning_percent)} of the
+          target sends an alert.</div>`
+      : `<p class="small muted">How much the household means to move into savings and investments each month. Behind it, you get an alert.</p>`}
     </div>
     <div class="section-label"><span>Goals</span></div>
-    ${plan.goals.length ? plan.goals.map(g => `<div class="card stack" data-goal="${esc(g.id)}" role="button" tabindex="0" style="cursor:pointer">
-      <div class="row"><div class="grow"><div style="font-weight:600">${esc(g.name)}${g.active ? "" : ` <span class="muted">(paused)</span>`}</div>
-        <div class="small muted">${money(g.current)} of ${money(g.target_amount)} by ${esc(fmtDate(`${g.target_date}T12:00:00`))}</div></div>
-        <span class="small">${Math.round(g.percent)}%</span></div>
-      <div class="progress"><span class="spent" style="width:${Math.min(100, g.percent)}%"></span></div>
-      <div class="small muted">${g.required_monthly != null ? `${money(g.required_monthly)} a month would get there` : g.remaining <= 0 ? "Reached 🎉" : "Past its date"}
-        ${g.oldest_balance ? ` · balances as of ${esc(fmtDate(`${g.oldest_balance}T12:00:00`))}` : ""}</div>
-    </div>`).join("") : `<p class="small muted">A goal is an amount by a date, counted from the balances of the accounts you pick
-      (record balances under Balances and net worth).</p>`}
-    <button class="btn secondary" data-add-goal>+ Add a goal</button>
+    ${plan.goals.map(g => `<div class="card">
+      <div class="row"><h3 class="grow">${esc(g.name)}${g.active ? "" : ` <span class="muted small">(paused)</span>`}</h3>
+        <button class="link" data-edit="${esc(g.id)}">Edit</button></div>
+      ${goalLine(g, { named: false })}
+      <div class="small muted" style="margin-top:6px">${plural(g.months_left, "month-end")} left · ${money(g.remaining)} to go ·
+        ${signedMoney(g.moved_this_month)} moved in this month${g.oldest_balance ? ` · some balances from ${isoDay(g.oldest_balance)}` : ""}</div>
+      <details style="margin-top:6px"><summary class="small">Counts ${plural(g.accounts.length, "account")}</summary>
+        <div class="list">${g.accounts.map(a => `<div class="item static"><div class="grow">${esc(a.account_name)}
+          <div class="sub">${esc(a.owner)}${a.as_of ? ` · ${isoDay(a.as_of)}` : " · no balance yet"}</div></div>
+          <span class="amt">${a.balance == null ? "—" : money(a.balance)}</span></div>`).join("")}</div></details>
+    </div>`).join("") || `<p class="small muted">A goal is an amount by a date, counted from the balances of the accounts you pick.</p>`}
+    <button class="btn secondary" data-add>+ Add a goal</button>
+    <p class="small muted">Goals count the accounts' latest balances (Balances and net worth). The monthly amount is what's left
+      divided by the month-ends left: a fact, not advice.</p>
   </div>`;
-  $("[data-save-target]", ctx.view).onclick = async () => {
-    const cents = toCents($("[data-target]", ctx.view).value), day = +$("[data-alert-day]", ctx.view).value;
-    if (!(cents >= 0) || !(day >= 1 && day <= 28)) {
-      $("[data-target-error]", ctx.view).textContent = "Enter an amount, and a day from 1 to 28.";
+  $("[data-target]", ctx.view).onclick = () => targetSheet(t);
+  $("[data-add]", ctx.view).onclick = () => goalSheet(null, accounts);
+  $$("[data-edit]", ctx.view).forEach(b => b.onclick = () => goalSheet(plan.goals.find(g => g.id === b.dataset.edit), accounts));
+}
+
+function targetSheet(t) {
+  const sheet = openSheet(`<h2>Monthly savings target</h2><div class="stack">
+    <label class="field">Amount a month<input inputmode="decimal" data-amount value="${t ? esc(centsText(toCents(t.monthly_amount))) : ""}" placeholder="0.00"></label>
+    <label class="field">Alert from day of the month<input inputmode="numeric" data-day maxlength="2" value="${t?.alert_day ?? 25}"></label>
+    <label class="field">Alert below (% of the target)<input inputmode="numeric" data-warn maxlength="3" value="${t ? Number(t.warning_percent) : 80}"></label>
+    <p class="small muted">0 turns the target off.</p><p class="err" data-error></p>
+    <button class="btn" data-save>Save</button><button class="btn text" data-close>Cancel</button></div>`);
+  $("[data-save]", sheet).onclick = async () => {
+    const cents = toCents($("[data-amount]", sheet).value || "0"), alertDay = Number($("[data-day]", sheet).value),
+          warn = Number($("[data-warn]", sheet).value);
+    if (!(cents >= 0) || !(alertDay >= 1 && alertDay <= 28) || !(warn > 0 && warn <= 100)) {
+      $("[data-error]", sheet).textContent = "Enter an amount, a day from 1 to 28 and a percent from 1 to 100.";
       return;
     }
     try {
-      await api("/savings/target", { method: "PUT", body: { monthly_amount: centsText(cents), alert_day: day } });
-      toast("Target saved"); route();
-    } catch (e) { $("[data-target-error]", ctx.view).textContent = e.message; }
+      await api("/savings/target", { method: "PUT", body: { monthly_amount: centsText(cents), alert_day: alertDay, warning_percent: warn } });
+      closeSheet(); toast("Target saved"); route();
+    } catch (e) { $("[data-error]", sheet).textContent = e.message; }
   };
-  $("[data-add-goal]", ctx.view).onclick = () => goalSheet(null, accounts);
-  $$("[data-goal]", ctx.view).forEach(card => card.onclick = () => goalSheet(plan.goals.find(g => g.id === card.dataset.goal), accounts));
 }
 
 function goalSheet(goal, accounts) {
-  const holding = accounts.filter(a => !["credit_card", "loan"].includes(a.kind));
   const g = goal ?? { name: "", target_amount: "", target_date: `${new Date().getFullYear() + 1}-12-31`, account_kinds: ["savings"],
                       account_ids: [], active: true };
   const kinds = new Set(g.account_kinds), ids = new Set(g.account_ids);
@@ -1085,21 +1123,31 @@ function goalSheet(goal, accounts) {
     <label class="field">By<input type="date" data-f="date" value="${esc(g.target_date)}"></label>
     <div class="field">Counts every account of these kinds<div class="chips">${GOAL_KINDS.map(([k, label]) =>
       `<button class="chip ${kinds.has(k) ? "on" : ""}" data-kind="${k}">${label}</button>`).join("")}</div></div>
-    <div class="field">…and these accounts<div class="card flush list">${holding.map(a => `<label class="item static">
-      <input type="checkbox" data-account="${esc(a.id)}" ${ids.has(a.id) ? "checked" : ""}>
-      <div class="grow">${esc(a.account_name)}<div class="sub">${esc(a.owner)}</div></div></label>`).join("")}</div></div>
+    <div class="field">…and these accounts<div class="card flush list" data-accounts></div></div>
     ${goal ? `<label class="row small"><input type="checkbox" data-active ${g.active ? "checked" : ""}> Working towards it</label>` : ""}
     <p class="err" data-error></p>
     <button class="btn" data-save>${goal ? "Save" : "Add goal"}</button>
     ${goal ? `<button class="btn danger" data-delete>Remove</button>` : ""}
     <button class="btn text" data-close>Cancel</button></div>`);
+  // Only accounts the picked kinds don't already count: a single loan or asset, or one account of another kind.
+  const listAccounts = () => {
+    const singles = accounts.filter(a => a.kind !== "credit_card" && !kinds.has(a.kind));
+    $("[data-accounts]", sheet).innerHTML = singles.map(a => `<label class="item static">
+      <input type="checkbox" data-account="${esc(a.id)}" ${ids.has(a.id) ? "checked" : ""}>
+      <div class="grow">${esc(a.account_name)}<div class="sub">${esc(a.owner)} · ${esc(a.kind.replace("_", " "))}</div></div></label>`).join("")
+      || `<div class="item static small muted">Every other account is already counted.</div>`;
+    $$("[data-account]", sheet).forEach(c => c.onchange = () => { c.checked ? ids.add(c.dataset.account) : ids.delete(c.dataset.account); });
+  };
+  listAccounts();
   $$("[data-kind]", sheet).forEach(b => b.onclick = () => {
     kinds.has(b.dataset.kind) ? kinds.delete(b.dataset.kind) : kinds.add(b.dataset.kind);
     b.classList.toggle("on", kinds.has(b.dataset.kind));
+    listAccounts();
   });
   $("[data-save]", sheet).onclick = async () => {
     const name = $('[data-f="name"]', sheet).value.trim(), cents = toCents($('[data-f="amount"]', sheet).value);
-    const chosen = $$("[data-account]", sheet).filter(c => c.checked).map(c => c.dataset.account);
+    // Accounts now covered by a picked kind needn't be listed one by one.
+    const chosen = accounts.filter(a => ids.has(a.id) && !kinds.has(a.kind)).map(a => a.id);
     if (!name || !(cents > 0)) { $("[data-error]", sheet).textContent = "Give it a name and an amount."; return; }
     if (!kinds.size && !chosen.length) { $("[data-error]", sheet).textContent = "Pick the accounts it's saved in."; return; }
     const body = { name, target_amount: centsText(cents), target_date: $('[data-f="date"]', sheet).value,
@@ -1374,10 +1422,13 @@ async function alertsScreen(ctx) {
   const alerts = await api("/alerts");
   if (!ctx.alive()) return;
   ctx.view.innerHTML = alerts.length ? `<div class="card flush list">${alerts.map(a => {
-    const exceeded = a.level === "EXCEEDED";
-    const inner = `<span style="font-size:20px">${exceeded ? "🔴" : "🟠"}</span><div class="grow">
-      <div>${exceeded ? `Over budget: ${esc(a.budget_line)}` : `${esc(a.budget_line)} at ${pct(a.spent / a.monthly_limit * 100)}`}</div>
-      <div class="sub">${money(a.spent)} of ${money(a.monthly_limit)} · ${esc(fmtWhen(a.created_at))}</div></div>`;
+    const exceeded = a.level === "EXCEEDED", saving = a.level === "BEHIND" || a.level === "SHORT";
+    const title = a.level === "BEHIND" ? `Behind on savings: ${pct(a.spent / a.monthly_limit * 100)} of the target`
+      : a.level === "SHORT" ? `${monthTitle(a.month)} savings finished short`
+      : exceeded ? `Over budget: ${a.budget_line}` : `${a.budget_line} at ${pct(a.spent / a.monthly_limit * 100)}`;
+    const inner = `<span style="font-size:20px">${saving ? "🐷" : exceeded ? "🔴" : "🟠"}</span><div class="grow">
+      <div>${esc(title)}</div>
+      <div class="sub">${money(a.spent)}${saving ? " moved" : ""} of ${money(a.monthly_limit)} · ${esc(fmtWhen(a.created_at))}</div></div>`;
     return a.transaction_id ? `<a class="item" href="#/txn/${a.transaction_id}">${inner}</a>` : `<div class="item static">${inner}</div>`;
   }).join("")}</div>` : `<p class="muted center">No budget alerts yet. Set budgets per budget line to get warned as you near them.</p>`;
 }

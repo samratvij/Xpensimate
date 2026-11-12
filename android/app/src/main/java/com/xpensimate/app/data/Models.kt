@@ -131,6 +131,10 @@ data class SavingsTotals(
     @SerialName("net_to_savings") val netToSavings: Double = 0.0,
     @SerialName("net_to_investments") val netToInvestments: Double = 0.0,
     val moved: Double = 0.0,
+    /** The monthly savings target and how far "moved" is towards it; status met | on_track | behind. */
+    val target: Double? = null,
+    @SerialName("target_percent") val targetPercent: Double? = null,
+    @SerialName("target_status") val targetStatus: String? = null,
 )
 
 /** The month's income: received and still expected (by who earned it), and what's left after spending. */
@@ -576,4 +580,78 @@ data class ChatUsage(
     val available: Boolean,
     /** Answers can draw on the web (Claude only). */
     @SerialName("web_search") val webSearch: Boolean = false,
+)
+
+// Savings target and goals
+
+@Serializable
+data class SavingsTarget(
+    @SerialName("monthly_amount") val monthlyAmount: Double,
+    @SerialName("alert_day") val alertDay: Int = 25,
+    @SerialName("warning_percent") val warningPercent: Double = 80.0,
+)
+
+@Serializable
+data class SavingsTargetIn(
+    @SerialName("monthly_amount") val monthlyAmount: String,
+    @SerialName("alert_day") val alertDay: Int,
+    @SerialName("warning_percent") val warningPercent: Double,
+)
+
+@Serializable
+data class TargetProgress(
+    val month: String,
+    val target: Double,
+    val saved: Double,
+    val kept: Double,
+    val percent: Double,
+    val remaining: Double,
+    /** met | on_track | behind */
+    val status: String,
+)
+
+@Serializable
+data class GoalAccount(
+    @SerialName("account_id") val accountId: String,
+    @SerialName("account_name") val accountName: String,
+    val owner: String,
+    val balance: Double? = null,
+    @SerialName("as_of") val asOf: String? = null,
+)
+
+@Serializable
+data class Goal(
+    val id: String,
+    val name: String,
+    @SerialName("target_amount") val targetAmount: Double,
+    @SerialName("target_date") val targetDate: String,
+    @SerialName("account_kinds") val accountKinds: List<String> = emptyList(),
+    @SerialName("account_ids") val accountIds: List<String> = emptyList(),
+    val active: Boolean = true,
+    val current: Double,
+    val remaining: Double,
+    val percent: Double,
+    @SerialName("months_left") val monthsLeft: Int,
+    /** What would reach the goal in the months left; null once reached or past the date. */
+    @SerialName("required_monthly") val requiredMonthly: Double? = null,
+    @SerialName("moved_this_month") val movedThisMonth: Double = 0.0,
+    @SerialName("oldest_balance") val oldestBalance: String? = null,
+    val accounts: List<GoalAccount> = emptyList(),
+)
+
+@Serializable
+data class SavingsPlan(
+    val target: SavingsTarget? = null,
+    val progress: TargetProgress? = null,
+    val goals: List<Goal> = emptyList(),
+)
+
+/** A new goal, or the fields to change (null: unchanged). Amount as a decimal string. */
+@Serializable
+data class GoalIn(
+    val name: String? = null,
+    @SerialName("target_amount") val targetAmount: String? = null,
+    @SerialName("target_date") val targetDate: String? = null,
+    @SerialName("account_kinds") val accountKinds: List<String>? = null,
+    @SerialName("account_ids") val accountIds: List<String>? = null,
 )

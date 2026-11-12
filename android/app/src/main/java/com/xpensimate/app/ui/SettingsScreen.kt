@@ -41,6 +41,7 @@ fun SettingsScreen(
     queue: NotificationQueue,
     onChangeServer: () -> Unit,
     onCategories: () -> Unit,
+    onSavings: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -73,6 +74,12 @@ fun SettingsScreen(
         Text("Categories", style = MaterialTheme.typography.titleMedium)
         Text("Add, rename or merge what-you-spent-on categories.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedButton(onClick = onCategories) { Text("Manage categories") }
+
+        HorizontalDivider()
+        Text("Savings target and goals", style = MaterialTheme.typography.titleMedium)
+        Text("How much to move into savings each month, and goals with a date. Once set, they show on the Budget tab.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedButton(onClick = onSavings) { Text("Savings target and goals") }
 
         HorizontalDivider()
         Text("Budget alerts", style = MaterialTheme.typography.titleMedium)

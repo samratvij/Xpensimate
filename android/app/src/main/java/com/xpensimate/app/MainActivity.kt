@@ -72,6 +72,8 @@ import com.xpensimate.app.ui.BudgetsScreen
 import com.xpensimate.app.ui.BudgetsViewModel
 import com.xpensimate.app.ui.CategoriesScreen
 import com.xpensimate.app.ui.CategoriesViewModel
+import com.xpensimate.app.ui.SavingsScreen
+import com.xpensimate.app.ui.SavingsViewModel
 import com.xpensimate.app.ui.ChatMemoryScreen
 import com.xpensimate.app.ui.ChatMemoryViewModel
 import com.xpensimate.app.ui.ChatScreen
@@ -199,6 +201,7 @@ private fun MainScaffold(
         route == "review" -> "Month review"
         route == "categories" -> "Categories"
         route == "memory" -> "Assistant memory"
+        route == "savings" -> "Savings target and goals"
         route?.startsWith("income/") == true -> "Income"
         route?.startsWith("balances/") == true -> "Balances"
         route?.startsWith("line/") == true -> entry?.arguments?.getString("line")
@@ -290,11 +293,13 @@ private fun MainScaffold(
                     },
                     onOpenIncome = { month -> nav.navigate("income/$month") },
                     onOpenBalances = { month -> nav.navigate("balances/$month") },
+                    onOpenSavings = { nav.navigate("savings") },
                     onOpenLine = { line, month, purpose ->
                         nav.navigate("line/${Uri.encode(line)}/$month?purpose=${Uri.encode(purpose ?: "")}")
                     },
                 )
             }
+            composable("savings") { SavingsScreen(rememberViewModel { SavingsViewModel(api) }) }
             composable("balances/{month}") { backStack ->
                 val month = YearMonth.parse(backStack.arguments?.getString("month"))
                 BalancesScreen(rememberViewModel(key = "balances-$month") { BalancesViewModel(api, month) })
@@ -322,7 +327,8 @@ private fun MainScaffold(
             composable(Tab.Bills.route) { BillsScreen(rememberViewModel { BillsViewModel(api) }) }
             composable(Tab.Chat.route) { ChatScreen(rememberViewModel { ChatViewModel(api) }) { nav.navigate("memory") } }
             composable("memory") { ChatMemoryScreen(rememberViewModel { ChatMemoryViewModel(api) }) }
-            composable(Tab.Settings.route) { SettingsScreen(config, api, app.notificationQueue, onChangeServer) { nav.navigate("categories") } }
+            composable(Tab.Settings.route) { SettingsScreen(config, api, app.notificationQueue, onChangeServer, onCategories = { nav.navigate("categories") },
+                    onSavings = { nav.navigate("savings") }) }
             composable("categories") { CategoriesScreen(rememberViewModel { CategoriesViewModel(api) }) }
             composable("review") {
                 ReviewScreen(

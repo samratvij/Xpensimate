@@ -23,6 +23,21 @@ interface Api {
     @GET("api/v1/summary")
     suspend fun summary(@Query("month") month: String, @Query("purpose") purpose: String? = null): Summary
 
+    @GET("api/v1/savings")
+    suspend fun savingsPlan(): SavingsPlan
+
+    @PUT("api/v1/savings/target")
+    suspend fun setSavingsTarget(@Body body: SavingsTargetIn): SavingsTarget
+
+    @POST("api/v1/savings/goals")
+    suspend fun createGoal(@Body body: GoalIn): Goal
+
+    @PATCH("api/v1/savings/goals/{id}")
+    suspend fun updateGoal(@Path("id") id: String, @Body body: GoalIn): Goal
+
+    @DELETE("api/v1/savings/goals/{id}")
+    suspend fun deleteGoal(@Path("id") id: String): Response<Unit>
+
     @GET("api/v1/balances")
     suspend fun balances(@Query("month") month: String): Balances
 

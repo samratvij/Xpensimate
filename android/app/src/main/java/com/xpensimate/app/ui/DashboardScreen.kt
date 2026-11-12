@@ -42,6 +42,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xpensimate.app.data.Api
 import com.xpensimate.app.data.Balances
+import com.xpensimate.app.data.SavingsPlan
 import com.xpensimate.app.data.DismissInsight
 import com.xpensimate.app.data.EARNERS
 import com.xpensimate.app.data.Insight
@@ -71,6 +72,9 @@ class DashboardViewModel(private val api: Api) : ViewModel() {
     /** Net worth (household view only). */
     var balances by mutableStateOf<Balances?>(null)
         private set
+    /** The savings target and goals (household view of the current month only). */
+    var plan by mutableStateOf<SavingsPlan?>(null)
+        private set
     // Insights are about the current month only; empty while another month is shown.
     var insights by mutableStateOf<List<Insight>>(emptyList())
         private set
@@ -90,12 +94,16 @@ class DashboardViewModel(private val api: Api) : ViewModel() {
             if (pull) refreshing = true else if (summary !is Load.Ok) summary = Load.Loading
             val trendJob = async { runCatching { api.trends(TREND_MONTHS, purpose) }.getOrNull() }
             val balancesJob = async { if (purpose == null) runCatching { api.balances(month.toString()) }.getOrNull() else null }
+            val planJob = async {
+                if (purpose == null && month == YearMonth.now()) runCatching { api.savingsPlan() }.getOrNull() else null
+            }
             val insightsJob = async {
                 if (month == YearMonth.now()) runCatching { api.insights(purpose) }.getOrNull() else emptyList()
             }
             summary = runCatching { api.summary(month.toString(), purpose) }.fold({ Load.Ok(it) }, { Load.Failed(it.friendly()) })
             trendJob.await()?.let { trend = it }
             balances = balancesJob.await()
+            plan = planJob.await()
             insightsJob.await()?.let { insights = it }
             refreshing = false
         }
@@ -146,6 +154,7 @@ fun DashboardScreen(
     onOpenLine: (line: String, month: YearMonth, purpose: String?) -> Unit,
     onOpenIncome: (month: YearMonth) -> Unit = {},
     onOpenBalances: (month: YearMonth) -> Unit = {},
+    onOpenSavings: () -> Unit = {},
 ) {
     // Reload when coming back from an edit screen (budgets, a transaction), keeping what's shown meanwhile.
     LaunchedEffect(Unit) { vm.load() }
@@ -157,7 +166,8 @@ fun DashboardScreen(
             is Load.Ok -> PullToRefreshBox(isRefreshing = vm.refreshing, onRefresh = { vm.load(pull = true) }) {
                 val openLine = { line: String -> onOpenLine(line, vm.month, vm.purpose) }
                 DashboardContent(vm, state.value, InsightNav(openLine, onOpenTransaction, onOpenBills), openLine,
-                    onOpenIncome = { onOpenIncome(vm.month) }, onOpenBalances = { onOpenBalances(vm.month) })
+                    onOpenIncome = { onOpenIncome(vm.month) }, onOpenBalances = { onOpenBalances(vm.month) },
+                    onOpenSavings = onOpenSavings)
             }
         }
     }
@@ -167,6 +177,7 @@ fun DashboardScreen(
 private fun DashboardContent(
     vm: DashboardViewModel, summary: Summary, nav: InsightNav, onOpenLine: (String) -> Unit, onOpenIncome: () -> Unit,
     onOpenBalances: () -> Unit,
+    onOpenSavings: () -> Unit,
 ) {
     // Budgeted lines first (closest to their limit on top), then everything else by size.
     val lines = summary.categories.sortedWith(
@@ -197,6 +208,9 @@ private fun DashboardContent(
         item { HeroCard(summary, vm.month, previous) }
         if (vm.purpose == null || vm.purpose in EARNERS) item(key = "income") {
             IncomeCard(summary.income, summary.savings, current = vm.month == YearMonth.now(), onClick = onOpenIncome)
+        }
+        summary.savings?.takeIf { it.target != null }?.let { sav ->
+            item(key = "savings") { SavingsCard(sav, vm.plan?.goals.orEmpty().filter { it.active }, onOpenSavings) }
         }
         vm.balances?.let { worth -> item(key = "worth") { NetWorthCard(worth, onOpenBalances) } }
         if (vm.trend.isNotEmpty()) item {
