@@ -54,6 +54,7 @@ icon = "family"
 # for the banks you use; add more accounts with any id you like.
 #   Tangerine: tangerine_mastercard, tangerine_cheq    PC Financial: pc_mastercard, pc_money
 #   Canadian Tire: ctfs_triangle    Wealthsimple: ws_credit, ws_cash    RBC: matched by card digits only
+#   Emirates NBD (SMS): enbd_debit
 
 [[accounts]]
 id = "tangerine_mastercard"

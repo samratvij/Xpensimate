@@ -88,6 +88,7 @@ KNOWN_ACCOUNTS = (
     AccountDef("ctfs_triangle", "Canadian Tire Financial Services", "Triangle Mastercard", kind="credit_card"),
     AccountDef("ws_credit", "Wealthsimple", "Wealthsimple Credit Card", kind="credit_card"),
     AccountDef("ws_cash", "Wealthsimple", "Wealthsimple Cash", kind="chequing"),
+    AccountDef("enbd_debit", "Emirates NBD", "Emirates NBD Account", currency="AED", kind="chequing"),
 )
 KNOWN_KINDS = {a.id: a.kind for a in KNOWN_ACCOUNTS}
 

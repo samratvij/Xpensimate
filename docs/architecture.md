@@ -69,7 +69,7 @@ month: a warning at the threshold, then exceeded over the limit.
 ## Ingestion
 - **Bank alert emails** (Tangerine, PC Financial, Canadian Tire, RBC): only subjects matching known
   transaction alerts are read; statements, offers and one-time codes are never stored.
-- **Phone notifications** (Wealthsimple, Google Wallet): captured raw on the phone and parsed on the server,
+- **Phone notifications** (Wealthsimple, Google Wallet, Emirates NBD SMS): captured raw on the phone and parsed on the server,
   so parsing can improve without an app release. A purchase reported by two live feeds is stored once, even
   when a wallet put it on the wrong account; the bank's own feed then corrects the account.
 - **Statement import** (CSV for Canadian Tire, PC Financial, Tangerine, Wealthsimple; PDF for RBC) confirms

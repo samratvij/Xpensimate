@@ -66,8 +66,8 @@ Xpensimate takes a different route:
 <td width="50%" valign="top">
 
 ### 📨 Automatic capture
-Bank alert emails through Gmail, Wealthsimple and Google Wallet purchase notifications on Android, and
-month-end statement imports that catch anything missed. A purchase reported by two feeds is stored once.
+Bank alert emails through Gmail, Wealthsimple and Google Wallet purchase notifications and Emirates NBD
+purchase SMS on Android, and month-end statement imports that catch anything missed. A purchase reported by two feeds is stored once.
 
 </td>
 <td width="50%" valign="top">
@@ -250,7 +250,7 @@ app, learns how you categorize, and can add your older spending.
 
 ## 🏦 Supported banks
 
-Bank support is Canadian today. Adding yours is usually one small parser module plus a test:
+Bank support is Canadian, plus Emirates NBD (UAE) by SMS. Adding yours is usually one small parser module plus a test:
 **[CONTRIBUTING.md](CONTRIBUTING.md)** shows how.
 
 | Bank | Alert emails | Phone notifications | Statement import |
@@ -261,6 +261,7 @@ Bank support is Canadian today. Adding yours is usually one small parser module 
 | Canadian Tire (Triangle) | 🧪 | | ✅ CSV |
 | Wealthsimple | | ✅ | ✅ CSV |
 | Google Wallet (any card) | | ✅ | |
+| Emirates NBD (debit card) | | ✅ SMS | |
 
 🧪 = written to the expected format, not yet confirmed against a real alert.
 

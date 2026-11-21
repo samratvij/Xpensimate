@@ -51,7 +51,12 @@ CSV statements are parsed in `backend/app/statements/parsers.py`: add a parser f
 `backend/app/daemons/parsers/wealthsimple.py` and `google_wallet.py` parse notifications the Android app
 forwards. The app only forwards packages listed in `CAPTURED_PACKAGES` in
 `android/app/src/main/java/com/xpensimate/app/WealthsimpleListener.kt` and the server only accepts those in `PARSERS` in
-`backend/app/api/v1/notifications.py`; a new source needs both.
+`backend/app/api/v1/notifications.py`; a new source needs both. Give the module a `REF_PREFIX`: it names the
+feed, so two feeds reporting one purchase are recognized as the same.
+
+A bank's SMS arrives as a notification from the messaging app, and often never names the bank. The parser
+then matches the exact purchase sentence (`enbd.py`), and the listener's `ENBD_PURCHASE` pattern applies the
+same one, so nothing else in the inbox leaves the phone. Redact real texts before committing.
 
 ## Style
 

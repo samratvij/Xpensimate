@@ -19,6 +19,8 @@ class ParsedAlert:
     card_suffix: str | None = None
     # The card as the alert names it ("Wealthsimple VIP"), for when the last four digits are not the card's own.
     card_name: str | None = None
+    # None: the household's currency. Set when the alert states its own (an ENBD SMS is AED).
+    currency: str | None = None
     # Money in (a deposit; `merchant` is the payer, `amount` positive). Stored as income only if it is pay
     # (app/services/income.py).
     income: bool = False

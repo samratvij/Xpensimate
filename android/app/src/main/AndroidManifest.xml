@@ -25,11 +25,11 @@
             </intent-filter>
         </service>
 
-        <!-- Reads Wealthsimple and Google Wallet purchase notifications only (filtered in code); needs "notification access". -->
+        <!-- Reads Wealthsimple, Google Wallet and Emirates NBD purchase SMS only (filtered in code); needs "notification access". -->
         <service
             android:name=".WealthsimpleListener"
             android:exported="true"
-            android:label="Xpensimate: Wealthsimple and Google Pay purchases"
+            android:label="Xpensimate: card purchases"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />

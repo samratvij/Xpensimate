@@ -73,6 +73,13 @@ name = "Triangle Mastercard"
 kind = "credit_card"
 owner = "Shared"
 [[accounts]]
+id = "enbd_debit"
+institution = "Emirates NBD"
+name = "Emirates NBD Account"
+kind = "chequing"
+owner = "Alex"
+card_last4 = "4242"
+[[accounts]]
 id = "rbc_visa"
 institution = "RBC"
 name = "RBC ION Visa"

@@ -19,6 +19,7 @@ from decimal import Decimal
 from app.daemons.parsers.common import ParsedAlert, card_suffix, clean_merchant, parse_amount
 
 PACKAGE = "com.wealthsimple.trade"
+REF_PREFIX = "ws"
 
 # Things that move money but aren't card spending.
 NOT_SPENDING = re.compile(

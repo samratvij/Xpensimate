@@ -12,6 +12,7 @@ from app.daemons.parsers import wealthsimple
 from app.daemons.parsers.common import ParsedAlert, clean_merchant, parse_amount
 
 PACKAGE = "com.google.android.apps.walletnfcrel"
+REF_PREFIX = "gpay"
 
 GENERIC_TITLES = re.compile(r"^(google (wallet|pay)|payment( made| sent| complete[d]?)?|purchase|transaction)$", re.IGNORECASE)
 NOT_SPENDING = re.compile(r"\b(declined|failed|couldn.t|could not|added|set up|ready to use|verify|refund requested)\b",

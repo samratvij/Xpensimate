@@ -108,11 +108,11 @@ fun SettingsScreen(
         testResult?.let { Text(it) }
 
         HorizontalDivider()
-        Text("Wealthsimple and Google Pay purchases", style = MaterialTheme.typography.titleMedium)
+        Text("Card purchases from notifications", style = MaterialTheme.typography.titleMedium)
         Text(
-            if (captureOn) "On: Wealthsimple and Google Pay purchase notifications become transactions (a purchase that also " +
-                "sends a bank email is recorded once). Other apps' notifications are ignored."
-            else "Off. Turn on notification access for Xpensimate so Wealthsimple and Google Pay purchases arrive as you spend.",
+            if (captureOn) "On: Wealthsimple, Google Pay and Emirates NBD SMS purchases become transactions (a purchase that " +
+                "also sends a bank email is recorded once). Other apps' notifications and other texts are ignored."
+            else "Off. Turn on notification access for Xpensimate so Wealthsimple, Google Pay and Emirates NBD purchases arrive as you spend.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         if (queued > 0) Text("$queued waiting to reach the server (they'll send when it's reachable).")

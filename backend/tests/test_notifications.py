@@ -202,3 +202,53 @@ def test_same_charge_on_two_cards_hours_apart_stays_two(client, db):
     a = send(client, "Corner Cafe", "$4.50 with Mastercard ••9775", package=GPAY, key="g12", at="2026-11-04T13:00:00+00:00").json()
     b = send(client, "Wealthsimple", "You spent $4.50 at Corner Cafe", key="w12", at="2026-11-04T16:00:00+00:00").json()
     assert (a["status"], b["status"]) == ("created", "created")
+
+
+# --- Emirates NBD SMS (real wording, card digits and city redacted) ---------------------------------------
+
+from app.daemons.parsers import enbd  # noqa: E402
+
+MESSAGES = "com.google.android.apps.messaging"
+ENBD_SMS = "Purchase of AED 170.03 with Debit Card ending 4242 at ENOC 1052, CITY. Avl Balance is AED 2,820.41."
+
+
+@pytest.mark.parametrize(
+    ("text", "amount", "merchant"),
+    [
+        (ENBD_SMS, "170.03", "ENOC 1052, CITY"),
+        ("Purchase of AED 74.00 with Debit Card ending 4242 at MCDONALDS-ENOC 1033-54, CITY. Avl Balance is AED 2,990.44.",
+         "74.00", "MCDONALDS-ENOC 1033-54, CITY"),
+        ("Purchase of AED 30.00 with Debit Card ending 4242 at e& Digital App, CITY. Avl Balance is AED 3,064.44.",
+         "30.00", "e& Digital App, CITY"),
+    ],
+)
+def test_enbd_sms_phrasings(text, amount, merchant):
+    alert = enbd.parse("", text)
+    assert (str(alert.amount), alert.merchant, alert.account_id, alert.card_suffix, alert.currency) == (
+        amount, merchant, "enbd_debit", "4242", "AED")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Your OTP is 482193 for a purchase of AED 50.00. Do not share it.",
+        "Purchase of AED 10.00 with Debit Card ending 4242 at METRO was declined.",
+        "Dinner at 8? I owe you AED 40.00",
+    ],
+)
+def test_enbd_other_texts_are_ignored(text):
+    assert enbd.parse("", text) is None
+
+
+def test_enbd_sms_becomes_an_aed_transaction_once(client, db):
+    first = send(client, "", ENBD_SMS, package=MESSAGES, key="sms1").json()
+    txn = first["transaction"]
+    assert (first["status"], txn["account_id"], txn["amount"], txn["currency"], txn["source"]) == (
+        "created", "enbd_debit", 170.03, "AED", "android_push")
+    assert send(client, "", ENBD_SMS, package=MESSAGES, key="sms1").json()["status"] == "duplicate"
+    assert send(client, "", "Hello there", package=MESSAGES, key="sms2").json()["status"] == "ignored"
+    assert db.scalar(select(func.count()).select_from(Transaction)) == 1
+
+
+def test_unreadable_enbd_purchase_is_kept(client, db):
+    assert send(client, "", "Purchase of AED 12.00 happened", package=MESSAGES, key="sms3").json()["status"] == "unparsed"
