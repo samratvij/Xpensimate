@@ -78,8 +78,9 @@ def test_detection_does_not_overwrite_known_items(db, client):
 
 
 def make(client, **body):
+    # Due today, so a charge pushed now always pays it. (Due on the 1st, a charge after the 19th was too far away.)
     payload = {"name": "Northside Boxing", "merchant_pattern": "Northside Boxing", "category": "Health & Fitness",
-               "purpose": "Alex", "amount": "75.40", "cadence": "monthly", "anchor_date": TODAY.replace(day=1).isoformat()}
+               "purpose": "Alex", "amount": "75.40", "cadence": "monthly", "anchor_date": TODAY.isoformat()}
     resp = client.post("/api/v1/recurring", json={**payload, **body})
     assert resp.status_code == 201, resp.text
     return resp.json()
