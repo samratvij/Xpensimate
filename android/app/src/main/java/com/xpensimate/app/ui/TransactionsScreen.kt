@@ -5,9 +5,11 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -44,6 +46,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xpensimate.app.data.Api
 import com.xpensimate.app.data.Account
+import com.xpensimate.app.data.ManualTransactionIn
+import com.xpensimate.app.data.Taxonomy
 import com.xpensimate.app.data.Transaction
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -59,6 +63,11 @@ class TransactionsViewModel(private val api: Api) : ViewModel() {
         private set
     var accounts by mutableStateOf<List<Account>>(emptyList())
         private set
+    var taxonomy by mutableStateOf<Taxonomy?>(null)
+        private set
+    var saving by mutableStateOf(false)
+        private set
+    var addError by mutableStateOf<String?>(null)
 
     // Filters and order; kept across month changes so you can flip through months with the same view.
     var category by mutableStateOf<String?>(null)
@@ -74,6 +83,23 @@ class TransactionsViewModel(private val api: Api) : ViewModel() {
     init {
         load()
         viewModelScope.launch { runCatching { api.accounts() }.onSuccess { accounts = it } }
+        viewModelScope.launch { runCatching { api.taxonomy() }.onSuccess { taxonomy = it } }
+    }
+
+    /** Add a purchase by hand, then show the month it landed in. */
+    fun add(body: ManualTransactionIn, onDone: () -> Unit) {
+        viewModelScope.launch {
+            saving = true
+            addError = null
+            runCatching { api.addTransaction(body) }
+                .onSuccess {
+                    onDone()
+                    val landed = YearMonth.from(LocalDate.parse(body.spentOn))
+                    if (landed != month) selectMonth(landed) else load()
+                }
+                .onFailure { addError = it.friendly() }
+            saving = false
+        }
     }
 
     fun selectMonth(value: YearMonth) { month = value; list = Load.Loading; load() }
@@ -96,6 +122,8 @@ private val shortDay: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM d")
 fun TransactionsScreen(vm: TransactionsViewModel, onOpen: (String) -> Unit) {
     // Reload when coming back from an edit screen (budgets, a transaction), keeping what's shown meanwhile.
     LaunchedEffect(Unit) { vm.load(pull = false) }
+    var adding by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         MonthBar(vm.month, vm::selectMonth, Modifier.padding(horizontal = 8.dp))
         when (val state = vm.list) {
@@ -144,9 +172,24 @@ fun TransactionsScreen(vm: TransactionsViewModel, onOpen: (String) -> Unit) {
                                 }
                             }
                         }
+                        item { Box(Modifier.padding(bottom = 72.dp)) }  // room to scroll past the Add button
                     }
                 }
             }
+        }
+    }
+    ExtendedFloatingActionButton(
+        onClick = { vm.addError = null; adding = true },
+        icon = { Icon(Icons.Default.Add, contentDescription = null) },
+        text = { Text("Add") },
+        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+    )
+    }
+    if (adding) {
+        // Today, or the last day of a past month being looked at.
+        val day = if (vm.month == YearMonth.now()) LocalDate.now() else vm.month.atEndOfMonth()
+        AddTransactionSheet(day, vm.accounts, vm.taxonomy, vm.saving, vm.addError, onDismiss = { adding = false }) { body ->
+            vm.add(body) { adding = false }
         }
     }
 }

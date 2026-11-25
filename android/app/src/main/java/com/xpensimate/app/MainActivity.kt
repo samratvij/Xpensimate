@@ -352,7 +352,8 @@ private fun MainScaffold(
             }
             composable("transaction/{id}") { backStack ->
                 val id = backStack.arguments?.getString("id").orEmpty()
-                TransactionDetailScreen(rememberViewModel(key = id) { TransactionDetailViewModel(api, id) }) { receiptId ->
+                TransactionDetailScreen(rememberViewModel(key = id) { TransactionDetailViewModel(api, id) },
+                    onDeleted = { nav.popBackStack() }) { receiptId ->
                     nav.navigate("receipt/$receiptId")
                 }
             }

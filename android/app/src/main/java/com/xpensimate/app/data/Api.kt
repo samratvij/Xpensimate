@@ -69,6 +69,13 @@ interface Api {
         @Query("limit") limit: Int = 200,
     ): List<Transaction>
 
+    @POST("api/v1/transactions")
+    suspend fun addTransaction(@Body body: ManualTransactionIn): Transaction
+
+    /** Only transactions added by hand (source "manual"); the server refuses the rest. */
+    @DELETE("api/v1/transactions/{id}")
+    suspend fun deleteTransaction(@Path("id") id: String): Response<Unit>
+
     @GET("api/v1/transactions/{id}")
     suspend fun transaction(@Path("id") id: String): Transaction
 

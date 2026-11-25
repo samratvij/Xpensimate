@@ -79,6 +79,20 @@ data class SplitLine(
 @Serializable
 data class SplitRequest(val items: List<SplitLine>)
 
+/** A purchase entered by hand: cash, or anything no alert, email or statement will report. */
+@Serializable
+data class ManualTransactionIn(
+    val amount: String,
+    @SerialName("spent_on") val spentOn: String,
+    val merchant: String,
+    /** null: cash (or an account Expensimate doesn't know). */
+    @SerialName("account_id") val accountId: String? = null,
+    /** null: let the server's categorizer pick. */
+    val category: String? = null,
+    val purpose: String? = null,
+    val note: String? = null,
+)
+
 @Serializable
 data class TransactionPatch(
     val category: String? = null,

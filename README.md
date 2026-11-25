@@ -68,6 +68,7 @@ Xpensimate takes a different route:
 ### 📨 Automatic capture
 Bank alert emails through Gmail, Wealthsimple and Google Wallet purchase notifications and Emirates NBD
 purchase SMS on Android, and month-end statement imports that catch anything missed. A purchase reported by two feeds is stored once.
+Cash, or anything no feed reports, can be added by hand on any day.
 
 </td>
 <td width="50%" valign="top">

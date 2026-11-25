@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -80,6 +81,18 @@ class TransactionDetailViewModel(private val api: Api, private val id: String) :
 
     private fun save(patch: TransactionPatch) = act { api.updateTransaction(id, patch) }
 
+    /** Only for what was added by hand; feed rows would come back on the next sync. */
+    fun delete(onDeleted: () -> Unit) {
+        viewModelScope.launch {
+            saving = true
+            error = null
+            runCatching { api.deleteTransaction(id).also { if (!it.isSuccessful) error("Server error ${it.code()}") } }
+                .onSuccess { onDeleted() }
+                .onFailure { error = it.friendly() }
+            saving = false
+        }
+    }
+
     private fun act(onDone: () -> Unit = {}, block: suspend () -> Transaction) {
         viewModelScope.launch {
             saving = true
@@ -96,8 +109,9 @@ private val detailTime = DateTimeFormatter.ofPattern("EEE, MMM d yyyy · h:mm a"
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
-fun TransactionDetailScreen(vm: TransactionDetailViewModel, onOpenReceipt: (String) -> Unit) {
+fun TransactionDetailScreen(vm: TransactionDetailViewModel, onDeleted: () -> Unit, onOpenReceipt: (String) -> Unit) {
     var splitting by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
     when (val state = vm.txn) {
         Load.Loading -> LoadingView()
         is Load.Failed -> ErrorView(state.message) { vm.load() }
@@ -194,6 +208,12 @@ fun TransactionDetailScreen(vm: TransactionDetailViewModel, onOpenReceipt: (Stri
                     })
                 }
 
+                if (txn.source == "manual") {
+                    TextButton(onClick = { confirmDelete = true }, enabled = !vm.saving, modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                        Text("Delete this transaction")
+                    }
+                }
                 if (txn.isIncome) return@Column
                 HorizontalDivider()
                 val receiptId = txn.receiptId
@@ -232,6 +252,15 @@ fun TransactionDetailScreen(vm: TransactionDetailViewModel, onOpenReceipt: (Stri
                 }
             }
 
+            if (confirmDelete) {
+                AlertDialog(
+                    onDismissRequest = { confirmDelete = false },
+                    title = { Text("Delete this transaction?") },
+                    text = { Text("${txn.merchant}, ${kotlin.math.abs(txn.amount).money()}, added by hand. This can't be undone.") },
+                    confirmButton = { TextButton(onClick = { confirmDelete = false; vm.delete(onDeleted) }) { Text("Delete") } },
+                    dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+                )
+            }
             val taxonomy = vm.taxonomy
             if (splitting && taxonomy != null) {
                 ModalBottomSheet(

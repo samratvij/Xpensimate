@@ -214,3 +214,44 @@ def test_split_transactions_are_not_matched_to_receipts(client, db):
     db.add(receipt)
     db.commit()
     assert try_match_receipt(db, receipt) is None
+
+
+# --- added by hand ---------------------------------------------------------------------------------
+
+MANUAL = {"amount": "12.50", "spent_on": "2026-11-03", "merchant": "Farmers market"}
+
+
+def test_manual_cash_purchase(client):
+    resp = client.post("/api/v1/transactions", json={**MANUAL, "category": "Grocery", "purpose": "Alex",
+                                                     "note": "  veggies  "})
+    assert resp.status_code == 201
+    body = resp.json()
+    assert (body["source"], body["account_id"], body["amount"], body["txn_type"]) == ("manual", None, 12.5, "PURCHASE")
+    assert (body["category"], body["category_is_manual"], body["categorized_by"]) == ("Grocery", True, "manual")
+    assert (body["purpose"], body["purpose_is_manual"], body["note"], body["edited_by"]) == ("Alex", True, "veggies", "Alex")
+    assert body["timestamp"].startswith("2026-11-03T")
+    listed = client.get("/api/v1/transactions", params={"start": "2026-11-01T00:00:00Z", "end": "2026-12-01T00:00:00Z"})
+    assert [t["id"] for t in listed.json()] == [body["id"]]
+
+
+def test_manual_purchase_is_categorized_when_no_category_given(client):
+    body = client.post("/api/v1/transactions", json={**MANUAL, "merchant": "SUBWAY #99", "account_id": "ws_credit"}).json()
+    assert (body["category"], body["category_is_manual"], body["categorized_by"]) == ("Eating Out", False, "rule")
+    assert body["account_id"] == "ws_credit"
+
+
+@pytest.mark.parametrize("change", [
+    {"account_id": "nope"}, {"category": "Not a category"}, {"purpose": "Nobody"}, {"amount": "0"},
+    {"amount": "-3.00"}, {"merchant": "  "}, {"spent_on": "2999-01-01"},
+])
+def test_manual_purchase_is_validated(client, change):
+    assert client.post("/api/v1/transactions", json={**MANUAL, **change}).status_code == 422
+
+
+def test_only_manual_transactions_can_be_deleted(client, db):
+    pushed = client.post("/api/v1/transactions/push", json=PUSH).json()["id"]
+    assert client.delete(f"/api/v1/transactions/{pushed}").status_code == 409
+    added = client.post("/api/v1/transactions", json=MANUAL).json()["id"]
+    assert client.delete(f"/api/v1/transactions/{added}").status_code == 204
+    assert client.get(f"/api/v1/transactions/{added}").status_code == 404
+    assert db.scalar(select(func.count()).select_from(Transaction)) == 1

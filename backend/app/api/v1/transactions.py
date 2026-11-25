@@ -1,17 +1,20 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, time
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.budget_evaluator import check_transaction
+from app.core.config import get_settings
 from app.core.security import require_token
 from app.core.taxonomy import UNCATEGORIZED, budget_line_condition
 from app.db.base import get_db
 from app.db.models import Account, CategorizationRule, Receipt, Transaction, TransactionItem
 from app.schemas import (
+    ManualTransactionIn,
     RecategorizeOut,
     SplitIn,
     TransactionDetail,
@@ -26,11 +29,13 @@ from app.core.taxonomy import earners
 from app.services.income import INCOME, INCOME_CATEGORIES
 from app.services.savings import TRANSFER
 from app.services.ingest import NewTransaction, ingest_transaction
-from app.services.reconciler import summarize_labels, unmatch
+from app.services.reconciler import summarize_labels, try_match_transaction, unmatch
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
 ANDROID_PUSH = "android_push"
+# Entered by hand: here, a bill marked paid, or income added by hand.
+MANUAL = "manual"
 # Rules saved from manual edits outrank the seeded starter rules (priority 1).
 REMEMBERED_RULE_PRIORITY = 10
 RECATEGORIZE_BATCH = 200
@@ -55,6 +60,40 @@ def push_transaction(body: TransactionPush, response: Response, db: Session = De
     )
     if not created:
         response.status_code = status.HTTP_200_OK
+    return txn
+
+
+@router.post("", response_model=TransactionOut, status_code=status.HTTP_201_CREATED)
+def add_transaction(
+    body: ManualTransactionIn, db: Session = Depends(get_db), user: str = Depends(require_token)
+) -> Transaction:
+    """Record a purchase by hand (cash, or anything no feed will report), on any day."""
+    if body.account_id and db.get(Account, body.account_id) is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Unknown account_id {body.account_id!r}")
+    require_category(db, body.category)
+    tz = ZoneInfo(get_settings().timezone)
+    now = datetime.now(tz)
+    # Today's entry keeps the time it was made, so it sorts with the day's other charges; past days get noon.
+    when = now if body.spent_on == now.date() else datetime.combine(body.spent_on, time(12, 0), tzinfo=tz)
+    if when > now:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "That day hasn't happened yet")
+    txn = Transaction(
+        source=MANUAL, source_ref=None, account_id=body.account_id, timestamp=when, amount=body.amount,
+        txn_type="PURCHASE", merchant_raw=body.merchant, category_is_manual=False, purpose_is_manual=False,
+        note=clean_note(body.note), edited_by=user,
+    )
+    apply_classification(txn, categorize(
+        db, merchant=body.merchant, account_id=body.account_id, amount=body.amount, timestamp=when,
+    ))
+    if body.category is not None:
+        txn.category, txn.category_is_manual, txn.categorized_by = body.category, True, "manual"
+    if body.purpose is not None:
+        txn.purpose, txn.purpose_is_manual = body.purpose, True
+    db.add(txn)
+    db.commit()
+    db.refresh(txn)
+    try_match_transaction(db, txn)  # a receipt photo may already be waiting for it
+    check_transaction(db, txn)
     return txn
 
 
@@ -213,6 +252,20 @@ def update_transaction(
     if txn.txn_type != INCOME and (body.category is not None or body.purpose is not None or body.excluded is False):
         check_transaction(db, txn)
     return _detail(db, txn_id)
+
+
+@router.delete("/{txn_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_transaction(txn_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
+    """Remove a transaction entered by hand (a typo, or one a statement later reported). Feed rows stay:
+    deleting them would let the next sync bring them back; mark them not an expense instead."""
+    txn = _get_or_404(db, txn_id)
+    if txn.source != MANUAL:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Only transactions added by hand can be deleted")
+    if receipt := db.scalar(select(Receipt).where(Receipt.matched_transaction_id == txn.id)):
+        unmatch(db, receipt)
+    db.delete(txn)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.put("/{txn_id}/items", response_model=TransactionDetail)

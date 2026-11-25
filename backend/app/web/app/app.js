@@ -472,8 +472,56 @@ async function transactionsScreen(ctx) {
   const m = state.txMonth;
   const txns = await api(`/transactions?start=${enc(monthStart(m))}&end=${enc(monthEnd(m))}&limit=500`);
   if (!ctx.alive()) return;
-  ctx.view.innerHTML = monthBar(m) + (txns.length ? txByDay(txns) : `<p class="muted center">No transactions this month.</p>`);
+  ctx.view.innerHTML = monthBar(m) + `<button class="btn secondary" data-add style="margin-bottom:12px">＋ Add a transaction</button>` +
+    (txns.length ? txByDay(txns) : `<p class="muted center">No transactions this month.</p>`);
   bindMonthBar(ctx.view, "txMonth");
+  $("[data-add]", ctx.view).onclick = () => addTransaction(m);
+}
+
+/** Enter a purchase by hand: cash, or anything no alert, email or statement will report. Any day, not just month end. */
+async function addTransaction(m) {
+  const [accts, tax] = await Promise.all([accounts(), taxonomy()]);
+  const paidWith = accts.filter(a => a.kind === "credit_card" || a.kind === "chequing");
+  // Default to today, or the last day of a past month being viewed.
+  const day = m === thisMonth() ? today() : localDay(new Date(monthDate(shiftMonth(m, 1)) - 1).toISOString());
+  const chips = (attr, values) => `<div class="chips"><button class="chip on" data-${attr}="">Auto</button>${values.map(v =>
+    `<button class="chip" data-${attr}="${esc(v)}">${esc(v)}</button>`).join("")}</div>`;
+  const sheet = openSheet(`<h2>Add a transaction</h2>
+    <p class="small muted">For cash, or anything that won't show up on a statement or alert.</p>
+    <label class="field">Amount<input inputmode="decimal" data-amount placeholder="0.00"></label>
+    <label class="field">Where / what<input data-merchant placeholder="Farmers market, haircut, …" maxlength="255"></label>
+    <label class="field">Date<input type="date" data-date value="${day}" max="${today()}"></label>
+    <label class="field">Paid with<select class="input" data-account><option value="">Cash / other</option>
+      ${paidWith.map(a => `<option value="${esc(a.id)}">${esc(a.account_name)}</option>`).join("")}</select></label>
+    <div class="field">What${chips("cat", tax.categories)}</div>
+    <div class="field">Who${chips("who", tax.purposes)}</div>
+    <label class="field">Note<textarea class="input" rows="2" data-note maxlength="${NOTE_MAX}" placeholder="${esc(NOTE_HINT)}"></textarea></label>
+    <p class="err" data-error></p>
+    <div class="stack"><button class="btn" data-save disabled>Add</button><button class="btn text" data-close>Cancel</button></div>`);
+  let category = "", purpose = "";
+  const pick = (attr, set) => $$(`[data-${attr}]`, sheet).forEach(b => b.onclick = () => {
+    $$(`[data-${attr}]`, sheet).forEach(x => x.classList.toggle("on", x === b)); set(b.dataset[attr]);
+  });
+  pick("cat", v => { category = v; });
+  pick("who", v => { purpose = v; });
+  const amount = $("[data-amount]", sheet), where = $("[data-merchant]", sheet), date = $("[data-date]", sheet);
+  const saveBtn = $("[data-save]", sheet);
+  const check = () => { saveBtn.disabled = !(toCents(amount.value) > 0 && where.value.trim() && date.value); };
+  amount.oninput = check; where.oninput = check; date.oninput = check;
+  saveBtn.onclick = async () => {
+    saveBtn.disabled = true;
+    try {
+      const txn = await api("/transactions", { method: "POST", body: {
+        amount: centsText(toCents(amount.value)), merchant: where.value.trim(), spent_on: date.value,
+        account_id: $("[data-account]", sheet).value || null, category: category || null, purpose: purpose || null,
+        note: $("[data-note]", sheet).value.trim() || null } });
+      closeSheet();
+      toast(`Added ${merchant(txn)} · ${txn.budget_line}`);
+      state.txMonth = localDay(txn.timestamp).slice(0, 7);
+      route();
+    } catch (e) { $("[data-error]", sheet).textContent = e.message; saveBtn.disabled = false; }
+  };
+  amount.focus();
 }
 
 async function transactionScreen(ctx, id) {
@@ -508,7 +556,8 @@ async function transactionScreen(ctx, id) {
           `<button class="chip ${txn.category === c ? "on" : ""}" data-cat="${esc(c)}" ${saving ? "disabled" : ""}>${esc(c)}</button>`).join("")}</div>
         <h3>Who earned it</h3><div class="chips">${earners().map(p =>
           `<button class="chip ${txn.purpose === p ? "on" : ""}" data-who="${esc(p)}" ${saving ? "disabled" : ""}>${esc(p)}</button>`).join("")}</div>
-      </div></div>`;
+      </div>${removeButton()}</div>`;
+    bindRemove();
     $$("[data-cat]", ctx.view).forEach(b => b.onclick = () => { if (txn.category !== b.dataset.cat) save({ category: b.dataset.cat }); });
     $$("[data-who]", ctx.view).forEach(b => b.onclick = () => { if (txn.purpose !== b.dataset.who) save({ purpose: b.dataset.who }); });
     noteBox($("[data-note]", ctx.view), txn.note, async text => {
@@ -560,7 +609,7 @@ async function transactionScreen(ctx, id) {
           <div class="grow"><div>${esc(i.sku_name)}</div><div class="sub">${esc(i.budget_line)}</div>
             ${i.note ? `<div class="sub note-line">📝 ${esc(i.note)}</div>` : ""}</div>
           <span class="amt">${money(i.price)}</span></div>`).join("")}</div>` : ""}
-      </div></div>`;
+      </div>${removeButton()}</div>`;
 
     $$("[data-cat]", ctx.view).forEach(b => b.onclick = () => {
       if (txn.category !== b.dataset.cat) save({ category: b.dataset.cat }, remember ? `Saved, and remembered for ${merchant(txn)}` : null);
@@ -577,6 +626,19 @@ async function transactionScreen(ctx, id) {
     $("[data-exclude]", ctx.view).onclick = () => save({ excluded: !txn.excluded });
     const split = $("[data-split]", ctx.view);
     if (split) split.onclick = () => splitEditor(txn, tax, updated => { txn = updated; if (ctx.alive()) draw(); });
+    bindRemove();
+  }
+
+  // Only what was entered by hand can be removed; feed rows would come back on the next sync.
+  const removeButton = () => txn.source === "manual" ? `<button class="btn text danger" data-remove>Delete this transaction</button>` : "";
+  function bindRemove() {
+    const btn = $("[data-remove]", ctx.view);
+    if (!btn) return;
+    btn.onclick = async () => {
+      if (!await confirmSheet("Delete this transaction?", `${merchant(txn)}, ${money(Math.abs(txn.amount))}, added by hand. This can't be undone.`, "Delete")) return;
+      try { await api(`/transactions/${id}`, { method: "DELETE" }); toast("Deleted"); history.back(); }
+      catch (e) { toast(e.message); }
+    };
   }
   draw();
 }

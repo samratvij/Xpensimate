@@ -37,6 +37,22 @@ class TransactionPush(BaseModel):
     source_ref: str | None = Field(None, max_length=255)
 
 
+class ManualTransactionIn(BaseModel):
+    """A purchase entered by hand: cash, or anything no alert, email or statement will report."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    amount: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+    spent_on: date
+    merchant: str = Field(min_length=1, max_length=255)
+    # None: cash (or an account Expensimate doesn't know).
+    account_id: str | None = None
+    # None: let the categorizer pick, as it does for any other charge.
+    category: str | None = Field(None, max_length=64)
+    purpose: Purpose | None = None
+    note: str | None = Field(None, max_length=NOTE_MAX)
+
+
 class TransactionPatch(BaseModel):
     category: str | None = Field(None, max_length=64)
     purpose: Purpose | None = None
