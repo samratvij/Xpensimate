@@ -4,6 +4,7 @@
 
 // Shared with /import, so signing in here also signs in there.
 const TOKEN_KEY = "xpensimate_token";
+const FIGURES_KEY = "xpensimate.hide_figures";
 const TREND_MONTHS = 6;
 const MAX_EDGE_PX = 2000;
 const ICONS = {
@@ -30,7 +31,8 @@ function setCurrency(code) {
   } catch { moneyFormat ??= new Intl.NumberFormat(undefined, { style: "currency", currency: "CAD", currencyDisplay: "narrowSymbol" }); }
 }
 setCurrency(localStorage.getItem("xpensimate.currency") || "CAD");
-const money = n => moneyFormat.format(Number(n) || 0);
+const money = n => state.hideFigures ? "•••" : moneyFormat.format(Number(n) || 0);
+const budgetMoney = n => moneyFormat.format(Number(n) || 0);
 const currencyName = code => { try { return new Intl.DisplayNames(undefined, { type: "currency" }).of(code); } catch { return code; } };
 // Common currencies first, then every other one the browser knows.
 const COMMON_CURRENCIES = ["CAD", "USD", "EUR", "GBP", "INR", "AUD", "NZD", "CHF", "JPY", "SGD", "AED", "MXN", "BRL", "ZAR"];
@@ -128,6 +130,7 @@ const state = {
   me: null,
   taxonomy: null,
   homeMonth: thisMonth(),
+  hideFigures: localStorage.getItem(FIGURES_KEY) === "1",
   purpose: null,
   txMonth: thisMonth(),
   billsMonth: thisMonth(),
@@ -199,7 +202,7 @@ function bindMonthBar(view, key) {
 function progress(spent, projected, limit, { over = false, warn = false } = {}) {
   const s = clamp01(spent / limit), p = Math.max(s, clamp01(projected / limit));
   return `<div class="progress ${over ? "bar-over" : warn ? "bar-warn" : ""}" role="img"
-      aria-label="${esc(money(spent))} of ${esc(money(limit))}">
+      aria-label="${esc(money(spent))} of ${esc(budgetMoney(limit))}">
     <div class="due" style="left:${s * 100}%;width:${(p - s) * 100}%"></div><div class="spent" style="width:${s * 100}%"></div></div>`;
 }
 
@@ -286,7 +289,7 @@ async function homeScreen(ctx) {
   }
   const hero = `<div class="card hero">
     <div class="label">${current ? "Spent so far this month" : `Spent in ${esc(monthTitle(m))}`}</div>
-    <div><span class="big">${money(summary.total_spent)}</span>${budget > 0 ? `<span class="of"> of ${money(budget)}</span>` : ""}</div>
+    <div><span class="big">${money(summary.total_spent)}</span>${budget > 0 ? `<span class="of"> of ${budgetMoney(budget)}</span>` : ""}</div>
     ${budget > 0 ? progress(summary.total_spent, projected, budget, { over: summary.total_spent > budget, warn: projected > budget }) : ""}
     <div class="stats">
       ${summary.total_bills_due > 0 ? `<div class="stat"><div class="k">Bills still due</div><div class="v">${money(summary.total_bills_due)}</div></div>` : ""}
@@ -347,7 +350,7 @@ async function homeScreen(ctx) {
   const lineCards = lines.length ? lines.map(l => {
     const notes = [];
     notes.push(...stillToCome(l));
-    if (l.monthly_limit) notes.push(`${pct(l.spent / l.monthly_limit * 100)} of ${money(l.monthly_limit)}`);
+    if (l.monthly_limit) notes.push(`${pct(l.spent / l.monthly_limit * 100)} of ${budgetMoney(l.monthly_limit)}`);
     let status = "";
     if (l.monthly_limit) {
       if (l.over_limit) status = `<div class="note over">Over budget by ${money(l.spent - l.monthly_limit)}</div>`;
@@ -456,7 +459,7 @@ async function lineScreen(ctx, line, m) {
     <div class="row">${badge(line, "lg")}<div><div style="font-size:20px;font-weight:600">${esc(line)}</div>
       <div class="small muted">${esc(monthTitle(m))} · ${plural(txns.length, "charge")}${who ? ` · ${esc(who)}` : ""}</div></div></div>
     <div style="margin-top:10px"><span class="big" style="font-size:28px;font-weight:700">${money(spend?.spent ?? 0)}</span>
-      ${spend?.monthly_limit ? `<span class="muted"> of ${money(spend.monthly_limit)}</span>` : ""}</div>
+      ${spend?.monthly_limit ? `<span class="muted"> of ${budgetMoney(spend.monthly_limit)}</span>` : ""}</div>
     ${spend?.monthly_limit ? progress(spend.spent, spend.projected, spend.monthly_limit, { over: spend.over_limit, warn: spend.over_warning || spend.projected_over_limit }) : ""}
     ${spend?.expected > 0 ? `<div class="small muted" style="margin-top:8px">${esc([...stillToCome(spend), `${money(spend.projected)} projected`].join(" · "))}</div>` : ""}
   </div>`;
@@ -1398,7 +1401,7 @@ async function reviewScreen(ctx) {
   const summary = `<div class="card"><div class="small muted">Spent in ${esc(monthTitle(r.month))}</div>
     <div style="font-size:32px;font-weight:700">${money(r.total_spent)}</div>
     ${r.total_budget > 0 ? progress(r.total_spent, r.total_spent, r.total_budget, { over: r.total_spent > r.total_budget, warn: r.total_spent > r.total_budget * 0.8 }) +
-      `<div style="margin-top:8px">${r.total_spent <= r.total_budget ? `${money(r.total_budget - r.total_spent)} under` : `${money(r.total_spent - r.total_budget)} over`} the ${money(r.total_budget)} budget</div>` : ""}
+      `<div style="margin-top:8px">${r.total_spent <= r.total_budget ? `${money(r.total_budget - r.total_spent)} under` : `${money(r.total_spent - r.total_budget)} over`} the ${budgetMoney(r.total_budget)} budget</div>` : ""}
     <div class="stats">${comparison("vs last month", r.total_spent, r.previous_total)}${comparison("vs 3-month average", r.total_spent, r.average_3m)}</div></div>`;
 
   const check = r.needs_check.length ? `<div class="card flush"><div style="padding:16px 16px 4px"><h3>Needs a look (${r.needs_check.length})</h3>
@@ -1416,7 +1419,7 @@ async function reviewScreen(ctx) {
       const usual = l.average_3m > 0 ? `${signedPct((l.spent - l.average_3m) / l.average_3m * 100)} vs usual ${money(l.average_3m)}` : "new this month";
       return `<div style="padding:10px 0;border-bottom:0.5px solid var(--line)"><div class="row">${badge(l.budget_line, "sm")}
         <div class="grow"><div>${esc(l.budget_line)}</div><div class="small ${over ? "err" : "muted"}">${esc(usual)}${over ? " · over budget" : ""}</div></div>
-        <div class="right"><div class="amt">${money(l.spent)}</div>${l.monthly_limit != null ? `<div class="small muted">of ${money(l.monthly_limit)}</div>` : ""}</div></div>
+        <div class="right"><div class="amt">${money(l.spent)}</div>${l.monthly_limit != null ? `<div class="small muted">of ${budgetMoney(l.monthly_limit)}</div>` : ""}</div></div>
         <div class="value-bar"><span class="${over ? "over" : ""}" style="width:${clamp01(l.spent / scale) * 100}%"></span>
           ${l.monthly_limit != null ? `<b style="left:calc(${clamp01(l.monthly_limit / scale) * 100}% - 1px)"></b>` : ""}</div></div>`;
     }).join("")}
@@ -1446,10 +1449,10 @@ async function budgetsScreen(ctx) {
   const total = budgets.reduce((s, b) => s + b.monthly_limit, 0);
   const rowHtml = r => `<div class="item" data-line="${esc(r.line)}">${badge(r.line, "sm")}
     <div class="grow"><div>${esc(r.line)}</div><div class="sub">${money(r.spend?.spent ?? 0)} spent this month${r.spend?.expected > 0 ? ` · +${money(r.spend.expected)} expected` : ""}</div></div>
-    ${r.budget ? `<div class="right"><div class="amt">${money(r.budget.monthly_limit)}</div><div class="small muted">warn at ${Math.round(r.budget.warning_threshold_percent)}%</div></div>`
+    ${r.budget ? `<div class="right"><div class="amt">${budgetMoney(r.budget.monthly_limit)}</div><div class="small muted">warn at ${Math.round(r.budget.warning_threshold_percent)}%</div></div>`
       : `<span class="link small">Set budget</span>`}</div>`;
   const shared = rows.filter(r => !(r.line in tax.person_lines)), people = rows.filter(r => r.line in tax.person_lines);
-  ctx.view.innerHTML = `<div class="card"><h3>Monthly budgets total ${money(total)}</h3>
+  ctx.view.innerHTML = `<div class="card"><h3>Monthly budgets total ${budgetMoney(total)}</h3>
       <div class="small muted">Tap a line to set its monthly limit. The Android app gets a notification at the warning level and when it's exceeded.</div></div>
     <div class="section-label">Shared</div><div class="card flush list">${shared.map(rowHtml).join("")}</div>
     <div class="section-label">People</div><div class="card flush list">${people.map(rowHtml).join("")}</div>`;
@@ -1490,7 +1493,7 @@ async function alertsScreen(ctx) {
       : exceeded ? `Over budget: ${a.budget_line}` : `${a.budget_line} at ${pct(a.spent / a.monthly_limit * 100)}`;
     const inner = `<span style="font-size:20px">${saving ? "🐷" : exceeded ? "🔴" : "🟠"}</span><div class="grow">
       <div>${esc(title)}</div>
-      <div class="sub">${money(a.spent)}${saving ? " moved" : ""} of ${money(a.monthly_limit)} · ${esc(fmtWhen(a.created_at))}</div></div>`;
+      <div class="sub">${money(a.spent)}${saving ? " moved" : ""} of ${budgetMoney(a.monthly_limit)} · ${esc(fmtWhen(a.created_at))}</div></div>`;
     return a.transaction_id ? `<a class="item" href="#/txn/${a.transaction_id}">${inner}</a>` : `<div class="item static">${inner}</div>`;
   }).join("")}</div>` : `<p class="muted center">No budget alerts yet. Set budgets per budget line to get warned as you near them.</p>`;
 }
@@ -1515,7 +1518,7 @@ async function categoriesScreen(ctx) {
     <div class="small muted">What money is spent on. Who it was for (${esc(tax.purposes.join(", "))}) stays fixed.</div>
     <button class="btn secondary" data-add>+ Add category</button>
     <div class="card flush list">${cats.map(c => `<div class="item" data-name="${esc(c.name)}">${badge(c.name)}
-      <div class="grow"><div>${esc(c.name)}</div><div class="sub">${plural(c.transactions, "transaction")}${c.monthly_limit != null ? ` · budget ${money(c.monthly_limit)}` : ""}</div></div>
+      <div class="grow"><div>${esc(c.name)}</div><div class="sub">${plural(c.transactions, "transaction")}${c.monthly_limit != null ? ` · budget ${budgetMoney(c.monthly_limit)}` : ""}</div></div>
       <span class="muted">›</span></div>`).join("")}</div></div>`;
   const done = async (fn, message) => {
     try { await fn(); closeSheet(); toast(message); await taxonomy(true); route(); }
@@ -2240,7 +2243,9 @@ async function route() {
   leaveHandlers = [];
   closeSheet();
   const view = $("#view");
-  if (!token()) return signInScreen(view);
+  if (!token()) { $("#figures").hidden = true; return signInScreen(view); }
+  $("#figures").hidden = false;
+  updateFigureToggle();
 
   // A new server starts with the setup wizard.
   if (state.setupNeeded === undefined) {
@@ -2294,6 +2299,20 @@ async function route() {
 $("#back").onclick = () => {
   if (history.length > 1) history.back();
   else location.hash = state.tab === "home" ? "#/" : `#/${state.tab}`;
+};
+function updateFigureToggle() {
+  const button = $("#figures");
+  button.setAttribute("aria-label", state.hideFigures ? "Show figures" : "Hide figures");
+  button.setAttribute("aria-pressed", String(state.hideFigures));
+  button.innerHTML = state.hideFigures
+    ? `<svg viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 5.2A10.7 10.7 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.1 3.8M6.2 6.2C3.5 8 2 12 2 12s3.5 7 10 7a10.7 10.7 0 0 0 4-.8"/></svg>`
+    : `<svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>`;
+}
+$("#figures").onclick = () => {
+  state.hideFigures = !state.hideFigures;
+  localStorage.setItem(FIGURES_KEY, state.hideFigures ? "1" : "0");
+  updateFigureToggle();
+  route();
 };
 $("#refresh").onclick = () => { state.taxonomy = null; route(); };
 // Tapping the tab you're on reloads it (and returns a month-browsing screen to this month).
