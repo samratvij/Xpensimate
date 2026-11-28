@@ -49,7 +49,13 @@ import com.xpensimate.app.data.Account
 import com.xpensimate.app.data.ManualTransactionIn
 import com.xpensimate.app.data.Taxonomy
 import com.xpensimate.app.data.Transaction
+import android.content.ContentResolver
+import android.net.Uri
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material3.IconButton
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -102,6 +108,25 @@ class TransactionsViewModel(private val api: Api) : ViewModel() {
         }
     }
 
+    var exporting by mutableStateOf(false)
+        private set
+    var exportError by mutableStateOf<String?>(null)
+
+    /** Download the statement and write it to the file the person picked. */
+    fun export(request: ExportRequest, target: Uri, resolver: ContentResolver, onDone: () -> Unit) {
+        viewModelScope.launch {
+            exporting = true
+            exportError = null
+            runCatching {
+                val body = api.exportTransactions(request.start.toString(), request.end.toString(), request.format, request.accountId)
+                withContext(Dispatchers.IO) {
+                    body.use { b -> resolver.openOutputStream(target, "wt")!!.use { out -> b.byteStream().copyTo(out) } }
+                }
+            }.onSuccess { onDone() }.onFailure { exportError = it.friendly() }
+            exporting = false
+        }
+    }
+
     fun selectMonth(value: YearMonth) { month = value; list = Load.Loading; load() }
 
     fun load(pull: Boolean = false) {
@@ -123,9 +148,15 @@ fun TransactionsScreen(vm: TransactionsViewModel, onOpen: (String) -> Unit) {
     // Reload when coming back from an edit screen (budgets, a transaction), keeping what's shown meanwhile.
     LaunchedEffect(Unit) { vm.load(pull = false) }
     var adding by remember { mutableStateOf(false) }
+    var exportingSheet by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
-        MonthBar(vm.month, vm::selectMonth, Modifier.padding(horizontal = 8.dp))
+        Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            MonthBar(vm.month, vm::selectMonth, Modifier.weight(1f))
+            IconButton(onClick = { vm.exportError = null; exportingSheet = true }) {
+                Icon(Icons.Filled.FileDownload, contentDescription = "Export a statement")
+            }
+        }
         when (val state = vm.list) {
             Load.Loading -> LoadingView()
             is Load.Failed -> ErrorView(state.message) { vm.load() }
@@ -184,6 +215,10 @@ fun TransactionsScreen(vm: TransactionsViewModel, onOpen: (String) -> Unit) {
         text = { Text("Add") },
         modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
     )
+    }
+    if (exportingSheet) {
+        ExportSheet(vm.month, vm.accounts, vm.exporting, vm.exportError, onDismiss = { exportingSheet = false },
+            onExport = { request, uri, resolver, done -> vm.export(request, uri, resolver) { exportingSheet = false; done() } })
     }
     if (adding) {
         // Today, or the last day of a past month being looked at.

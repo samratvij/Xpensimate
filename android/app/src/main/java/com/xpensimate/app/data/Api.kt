@@ -4,6 +4,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
+import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
@@ -17,6 +18,7 @@ import retrofit2.http.PUT
 import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
+import retrofit2.http.Streaming
 import java.util.concurrent.TimeUnit
 
 interface Api {
@@ -68,6 +70,16 @@ interface Api {
         @Query("budget_line") budgetLine: String? = null,
         @Query("limit") limit: Int = 200,
     ): List<Transaction>
+
+    /** Every transaction from start to end (both included, yyyy-MM-dd) as a statement file: format "pdf" or "csv". */
+    @Streaming
+    @GET("api/v1/transactions/export")
+    suspend fun exportTransactions(
+        @Query("start") start: String,
+        @Query("end") end: String,
+        @Query("format") format: String,
+        @Query("account_id") accountId: String? = null,
+    ): ResponseBody
 
     @POST("api/v1/transactions")
     suspend fun addTransaction(@Body body: ManualTransactionIn): Transaction
