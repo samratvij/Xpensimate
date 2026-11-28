@@ -86,7 +86,7 @@ private fun AlertRow(alert: BudgetAlert, onClick: (() -> Unit)?) {
             },
                 style = MaterialTheme.typography.bodyLarge)
             Text(
-                "${alert.spent.money()}${if (saving) " moved" else ""} of ${alert.monthlyLimit.money()} · " +
+                "${alert.spent.money()}${if (saving) " moved" else ""} of ${alert.monthlyLimit.budgetMoney()} · " +
                     parseInstant(alert.createdAt).atZone(zone).format(alertTime),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -123,7 +123,7 @@ private fun LineHeader(line: String, month: YearMonth, spend: LineSpend?, count:
             Row(verticalAlignment = Alignment.Bottom) {
                 Text((spend?.spent ?: 0.0).money(), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
                 spend?.monthlyLimit?.let {
-                    Text("  of ${it.money()}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 4.dp))
+                    Text("  of ${it.budgetMoney()}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 4.dp))
                 }
             }
             val limit = spend?.monthlyLimit

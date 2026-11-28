@@ -165,8 +165,8 @@ private fun SummaryCard(r: MonthReview) {
                 BudgetProgress(r.totalSpent, r.totalSpent, r.totalBudget, over = r.totalSpent > r.totalBudget,
                     warn = r.totalSpent > r.totalBudget * 0.8)
                 Text(
-                    if (r.totalSpent <= r.totalBudget) "${(r.totalBudget - r.totalSpent).money()} under the ${r.totalBudget.money()} budget"
-                    else "${(r.totalSpent - r.totalBudget).money()} over the ${r.totalBudget.money()} budget",
+                    if (r.totalSpent <= r.totalBudget) "${(r.totalBudget - r.totalSpent).money()} under the ${r.totalBudget.budgetMoney()} budget"
+                    else "${(r.totalSpent - r.totalBudget).money()} over the ${r.totalBudget.budgetMoney()} budget",
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
@@ -214,7 +214,7 @@ private fun LineRow(line: ReviewLine, scale: Double) {
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(line.spent.money(), fontWeight = FontWeight.SemiBold)
-                line.monthlyLimit?.let { Text("of ${it.money()}", style = MaterialTheme.typography.bodySmall,
+                line.monthlyLimit?.let { Text("of ${it.budgetMoney()}", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
         }

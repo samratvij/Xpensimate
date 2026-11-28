@@ -108,7 +108,7 @@ fun CategoriesScreen(vm: CategoriesViewModel) {
                             Text(c.name)
                             Text(
                                 "${c.transactions} transaction${if (c.transactions == 1) "" else "s"}" +
-                                    (c.monthlyLimit?.let { " · budget ${it.money()}" } ?: ""),
+                                    (c.monthlyLimit?.let { " · budget ${it.budgetMoney()}" } ?: ""),
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
