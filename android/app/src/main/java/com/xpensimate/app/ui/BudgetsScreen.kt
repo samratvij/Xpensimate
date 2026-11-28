@@ -83,7 +83,7 @@ fun BudgetsScreen(vm: BudgetsViewModel) {
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
                 item {
                     Column(Modifier.padding(16.dp)) {
-                        Text("Monthly budgets total ${total.money()}", style = MaterialTheme.typography.titleMedium)
+                        Text("Monthly budgets total ${total.budgetMoney()}", style = MaterialTheme.typography.titleMedium)
                         Text("Tap a line to set its monthly limit. You'll get a notification at the warning level and when it's exceeded.",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         vm.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -129,7 +129,7 @@ private fun BudgetLineRow(row: BudgetRow, onClick: () -> Unit) {
         val budget = row.budget
         if (budget != null) {
             Column(horizontalAlignment = Alignment.End) {
-                Text(budget.monthlyLimit.money(), fontWeight = FontWeight.SemiBold)
+                Text(budget.monthlyLimit.budgetMoney(), fontWeight = FontWeight.SemiBold)
                 Text("warn at ${budget.warningThresholdPercent.toInt()}%", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }

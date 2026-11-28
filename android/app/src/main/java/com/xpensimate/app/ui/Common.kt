@@ -64,6 +64,11 @@ object AppCurrency {
     var code by mutableStateOf("CAD")
 }
 
+/** The eye toggle masks money figures throughout the app; budget limits remain visible. */
+object HideFigures {
+    var on by mutableStateOf(false)
+}
+
 private val moneyFormats = mutableMapOf<String, NumberFormat>()
 
 /** The phone's number style with the household's currency; "CA$", "US$" or "A$" show as plain "$". */
@@ -80,10 +85,15 @@ private fun moneyFormat(code: String): NumberFormat = moneyFormats.getOrPut(code
     }
 }
 
-fun Double.money(): String = moneyFormat(AppCurrency.code).format(this)
+fun Double.money(): String = if (HideFigures.on) "•••" else moneyFormat(AppCurrency.code).format(this)
 
 /** Without cents, for round example amounts ("$3,000"). */
-fun Double.wholeMoney(): String =
+fun Double.wholeMoney(): String = if (HideFigures.on) "•••" else budgetWholeMoney()
+
+/** Budget limits stay visible while the privacy toggle masks other money figures. */
+fun Double.budgetMoney(): String = moneyFormat(AppCurrency.code).format(this)
+
+fun Double.budgetWholeMoney(): String =
     (moneyFormat(AppCurrency.code).clone() as NumberFormat).apply { maximumFractionDigits = 0 }.format(this)
 
 val zone: ZoneId = ZoneId.systemDefault()

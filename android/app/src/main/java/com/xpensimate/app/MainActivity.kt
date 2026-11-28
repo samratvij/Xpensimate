@@ -27,6 +27,8 @@ import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.QuestionAnswer
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -60,6 +62,7 @@ import com.xpensimate.app.data.QueueFlushWorker
 import com.xpensimate.app.data.ServerConfig
 import com.xpensimate.app.ui.AlertsScreen
 import com.xpensimate.app.ui.AppCurrency
+import com.xpensimate.app.ui.HideFigures
 import com.xpensimate.app.data.HouseholdPeople
 import com.xpensimate.app.ui.AlertsViewModel
 import com.xpensimate.app.ui.BalancesScreen
@@ -167,6 +170,8 @@ private fun MainScaffold(
     val nav = rememberNavController()
     val context = LocalContext.current
     val askPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) { app.settings.hideFigures.collect { HideFigures.on = it } }
     LaunchedEffect(config) {
         // Person and family budget lines are the server's to define; the icons need them.
         runCatching { api.taxonomy() }.onSuccess {
@@ -219,6 +224,10 @@ private fun MainScaffold(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { scope.launch { app.settings.setHideFigures(!HideFigures.on) } }) {
+                        Icon(if (HideFigures.on) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                            contentDescription = if (HideFigures.on) "Show figures" else "Hide figures")
+                    }
                     if (route == Tab.Dashboard.route) {
                         IconButton(onClick = { nav.navigate("review") }) {
                             Icon(Icons.Filled.Insights, contentDescription = "Month review")

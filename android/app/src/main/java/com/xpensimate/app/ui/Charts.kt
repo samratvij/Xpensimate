@@ -85,7 +85,7 @@ fun MonthlyBars(months: List<MonthTotal>, selected: YearMonth, onSelect: (YearMo
     val selectedMark = MaterialTheme.colorScheme.onSurface
     val peak = max(1.0, months.maxOfOrNull { it.spent + it.expected } ?: 1.0)
     val labelFormat = DateTimeFormatter.ofPattern("MMM")
-    val description = months.joinToString { "${YearMonth.parse(it.month).format(labelFormat)} ${it.spent.money()}" }
+    val description = months.joinToString { "${YearMonth.parse(it.month).format(labelFormat)} ${it.spent.wholeMoney()}" }
 
     Column(modifier) {
         Canvas(

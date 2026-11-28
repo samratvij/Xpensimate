@@ -1,6 +1,7 @@
 package com.xpensimate.app.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -14,6 +15,7 @@ const val DEFAULT_SERVER_URL = ""
 private val Context.dataStore by preferencesDataStore(name = "settings")
 private val BASE_URL = stringPreferencesKey("base_url")
 private val TOKEN = stringPreferencesKey("api_token")
+private val HIDE_FIGURES = booleanPreferencesKey("hide_figures")
 
 /** Server address and API token, kept in the app's private storage (backups are disabled in the manifest). */
 class Settings(private val context: Context) {
@@ -28,6 +30,12 @@ class Settings(private val context: Context) {
             it[BASE_URL] = config.baseUrl.trim()
             it[TOKEN] = config.token.trim()
         }
+    }
+
+    val hideFigures: Flow<Boolean> = context.dataStore.data.map { it[HIDE_FIGURES] ?: false }
+
+    suspend fun setHideFigures(value: Boolean) {
+        context.dataStore.edit { it[HIDE_FIGURES] = value }
     }
 
     suspend fun clear() {

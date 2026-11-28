@@ -252,7 +252,7 @@ private fun HeroCard(summary: Summary, month: YearMonth, previous: Double?) {
             Row(verticalAlignment = Alignment.Bottom) {
                 Text(summary.totalSpent.wholeMoney(), style = MaterialTheme.typography.displaySmall,
                     fontWeight = FontWeight.SemiBold, color = onColor)
-                Text(if (budget > 0) "  of ${budget.wholeMoney()}" else "  spent", style = MaterialTheme.typography.titleMedium,
+                Text(if (budget > 0) "  of ${budget.budgetWholeMoney()}" else "  spent", style = MaterialTheme.typography.titleMedium,
                     color = onColor.copy(alpha = 0.75f), modifier = Modifier.padding(bottom = 6.dp))
             }
             if (budget > 0) BudgetProgress(summary.totalSpent, projected, budget, over = summary.totalSpent > budget,
@@ -353,7 +353,7 @@ private fun LineRow(line: LineSpend, onClick: () -> Unit) {
                 Text(
                     buildAnnotatedString {
                         withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(line.spent.wholeMoney()) }
-                        line.monthlyLimit?.let { withStyle(SpanStyle(color = colors.onSurfaceVariant)) { append(" / ${it.wholeMoney()}") } }
+                        line.monthlyLimit?.let { withStyle(SpanStyle(color = colors.onSurfaceVariant)) { append(" / ${it.budgetWholeMoney()}") } }
                     },
                     style = MaterialTheme.typography.bodyMedium,
                 )
