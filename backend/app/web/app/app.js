@@ -472,10 +472,60 @@ async function transactionsScreen(ctx) {
   const m = state.txMonth;
   const txns = await api(`/transactions?start=${enc(monthStart(m))}&end=${enc(monthEnd(m))}&limit=500`);
   if (!ctx.alive()) return;
-  ctx.view.innerHTML = monthBar(m) + `<button class="btn secondary" data-add style="margin-bottom:12px">＋ Add a transaction</button>` +
+  ctx.view.innerHTML = monthBar(m) + `<div class="btn-row" style="margin-bottom:12px">
+      <button class="btn secondary" data-add>＋ Add</button><button class="btn secondary" data-export>⬇ Export</button></div>` +
     (txns.length ? txByDay(txns) : `<p class="muted center">No transactions this month.</p>`);
   bindMonthBar(ctx.view, "txMonth");
   $("[data-add]", ctx.view).onclick = () => addTransaction(m);
+  $("[data-export]", ctx.view).onclick = () => exportStatement(m);
+}
+
+/** Download every transaction for a month or any date range, like a bank statement: PDF or CSV. */
+async function exportStatement(m = thisMonth()) {
+  const accts = await accounts();
+  const lastDay = month => localDay(new Date(monthDate(shiftMonth(month, 1)) - 1).toISOString());
+  const seg = (attr, options, on) => `<div class="seg">${options.map(([v, label]) =>
+    `<button data-${attr}="${v}" class="${v === on ? "on" : ""}">${label}</button>`).join("")}</div>`;
+  const sheet = openSheet(`<h2>Export a statement</h2>
+    <p class="small muted">Every transaction in the period, oldest first, with debits, credits, categories and notes.</p>
+    <div class="field">${seg("mode", [["month", "Month"], ["range", "Date range"]], "month")}</div>
+    <label class="field" data-month-field>Month<input type="month" data-month value="${m}" max="${thisMonth()}"></label>
+    <div class="btn-row" data-range-field hidden>
+      <label class="field" style="flex:1">From<input type="date" data-from value="${m}-01" max="${today()}"></label>
+      <label class="field" style="flex:1">To<input type="date" data-to value="${m === thisMonth() ? today() : lastDay(m)}" max="${today()}"></label></div>
+    <label class="field">Account<select class="input" data-account><option value="">All accounts</option>
+      ${accts.map(a => `<option value="${esc(a.id)}">${esc(a.account_name)}</option>`).join("")}</select></label>
+    <div class="field">Format${seg("format", [["pdf", "PDF statement"], ["csv", "CSV (spreadsheet)"]], "pdf")}</div>
+    <p class="err" data-error></p>
+    <div class="stack"><button class="btn" data-go>Download</button><button class="btn text" data-close>Cancel</button></div>`);
+  let mode = "month", format = "pdf";
+  const pick = (attr, set) => $$(`[data-${attr}]`, sheet).forEach(b => b.onclick = () => {
+    $$(`[data-${attr}]`, sheet).forEach(x => x.classList.toggle("on", x === b)); set(b.dataset[attr]);
+  });
+  pick("mode", v => { mode = v; $("[data-month-field]", sheet).hidden = v !== "month"; $("[data-range-field]", sheet).hidden = v !== "range"; });
+  pick("format", v => { format = v; });
+  const go = $("[data-go]", sheet), error = $("[data-error]", sheet);
+  go.onclick = async () => {
+    const month = $("[data-month]", sheet).value;
+    const [start, end] = mode === "month" ? [month && `${month}-01`, month && lastDay(month)]
+      : [$("[data-from]", sheet).value, $("[data-to]", sheet).value];
+    if (!start || !end) { error.textContent = "Pick the dates first."; return; }
+    if (end < start) { error.textContent = "The end date is before the start date."; return; }
+    const account = $("[data-account]", sheet).value;
+    go.disabled = true; go.textContent = "Preparing…"; error.textContent = "";
+    try {
+      const resp = await api(`/transactions/export?start=${start}&end=${end}&format=${format}${account ? `&account_id=${enc(account)}` : ""}`, { raw: true });
+      const name = resp.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? `xpensimate_${start}_to_${end}.${format}`;
+      const url = URL.createObjectURL(await resp.blob());
+      const link = Object.assign(document.createElement("a"), { href: url, download: name });
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      closeSheet();
+      toast(`Downloaded ${name}`);
+    } catch (e) { error.textContent = e.message; go.disabled = false; go.textContent = "Download"; }
+  };
 }
 
 /** Enter a purchase by hand: cash, or anything no alert, email or statement will report. Any day, not just month end. */
@@ -1367,6 +1417,9 @@ async function moreScreen(ctx) {
       ${link("#/budgets", "🎯", "Budgets", "Monthly limits per budget line")}
       ${link("#/alerts", "🔔", "Budget alerts", "Warnings and overages so far")}
       ${link("#/household", "🏠", "Household", "People, cards and accounts")}
+      <button class="item" data-export style="width:100%;text-align:left;border:0;background:none;font:inherit;color:inherit;cursor:pointer">
+        <span class="badge sm" aria-hidden="true">⬇️</span><div class="grow"><div>Export a statement</div>
+        <div class="sub">Every transaction for a month or date range, as PDF or CSV</div></div><span class="muted">›</span></button>
       ${link("#/income", "💰", "Income", "Pay received and expected, by person")}
       ${link("#/balances", "🏦", "Balances and net worth", "What each account holds, from screenshots")}
       ${link("#/savings", "🎯", "Savings target and goals", "How much to put away, and what for")}
@@ -1380,6 +1433,7 @@ async function moreScreen(ctx) {
       <div class="small muted">Changes you make are recorded under this name.</div>
       <button class="btn text danger" data-signout style="margin-top:8px">Sign out of this browser</button></div>
   </div>`;
+  $("[data-export]", ctx.view).onclick = () => exportStatement();
   $("[data-signout]", ctx.view).onclick = async () => {
     if (!await confirmSheet("Sign out?", "You'll need your access key to sign in again on this phone.", "Sign out")) return;
     localStorage.removeItem(TOKEN_KEY);

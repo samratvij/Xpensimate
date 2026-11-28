@@ -1,6 +1,7 @@
 import uuid
-from datetime import datetime, time
+from datetime import date, datetime, time
 from decimal import Decimal
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -28,6 +29,7 @@ from app.services.notes import clean_note
 from app.core.taxonomy import earners
 from app.services.income import INCOME, INCOME_CATEGORIES
 from app.services.savings import TRANSFER
+from app.services.export import build_statement, to_csv, to_pdf
 from app.services.ingest import NewTransaction, ingest_transaction
 from app.services.reconciler import summarize_labels, try_match_transaction, unmatch
 
@@ -165,6 +167,31 @@ def list_transactions(
         )
     query = query.order_by(Transaction.timestamp.desc(), Transaction.id).limit(limit).offset(offset)
     return list(db.scalars(query))
+
+
+@router.get("/export", response_class=Response)
+def export_transactions(
+    start: date = Query(..., description="First day, in the household's time zone"),
+    end: date = Query(..., description="Last day, included"),
+    format: Literal["csv", "pdf"] = "csv",
+    account_id: str | None = None,
+    db: Session = Depends(get_db),
+) -> Response:
+    """Every transaction from start to end (both days included), as a statement: CSV for a spreadsheet, or a PDF."""
+    if account_id and db.get(Account, account_id) is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Unknown account_id {account_id!r}")
+    tz = ZoneInfo(get_settings().timezone)
+    try:
+        statement = build_statement(db, start, end, tz, account_id)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
+    if format == "pdf":
+        content, media = to_pdf(statement, datetime.now(tz)), "application/pdf"
+    else:
+        content, media = to_csv(statement), "text/csv; charset=utf-8"
+    return Response(content, media_type=media, headers={
+        "Content-Disposition": f'attachment; filename="{statement.filename_stem}.{format}"',
+    })
 
 
 def _get_or_404(db: Session, txn_id: uuid.UUID) -> Transaction:
